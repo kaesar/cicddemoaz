@@ -1,0 +1,25 @@
+[server]
+port=9990
+corsOrigins=http://localhost:3000
+
+[auth]
+# provider: oidc | cognito | none (none solo local)
+provider=oidc
+oidc.issuer=http://localhost:8787/common/v2.0
+oidc.audience=api://my-webapp
+oidc.jwksUrl=http://localhost:8787/common/discovery/v2.0/keys
+oidc.requiredClaims=sub,exp,iss
+# En Azure: issuer=https://<xid-fqdn>/common/v2.0, jwksUrl=https://<xid-fqdn>/common/discovery/v2.0/keys
+# Cognito subset alternativo:
+# provider=cognito
+# cognito.jwksUrl=<xid>/.well-known/jwks.json
+
+[kv]
+# store: memory | h2 | cosmos
+store=memory
+# Para Fase 3 / Azure, cambiar a:
+# store=cosmos
+# cosmos.endpoint=https://<cuenta>.documents.azure.com:443/
+# cosmos.key=${COSMOS_KEY}            ; inyectado desde Key Vault (Container App secret)
+# cosmos.database=onmind
+# cosmos.container=kv

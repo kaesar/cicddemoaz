@@ -1,0 +1,18 @@
+steps:
+  - script: |
+      set -e
+      echo "== Integración OTP mock + /abc =="
+      echo "Levantar XID (:8787) y XDB (:9990) antes de este template."
+      XID_BASE="${XID_BASE:-http://localhost:8787}"
+      XDB_BASE="${XDB_BASE:-http://localhost:9990}"
+      TENANT="${XID_TENANT:-common}"
+      curl -sf "$XID_BASE/$TENANT/v2.0/.well-known/openid-configuration" | head -c 300; echo
+      if [ -n "${E2E_TOKEN:-}" ]; then
+        curl -sf -X POST "$XDB_BASE/abc" \
+          -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer $E2E_TOKEN" \
+          -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}' | head -c 500; echo
+      else
+        echo "E2E_TOKEN vacío: test manual con OTP en navegador."
+      fi
+    displayName: 'Integración OTP mock + /abc'

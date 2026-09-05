@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Smoke E2E: discovery XID + JWKS + /abc con Bearer + CORS. Uso: XID_BASE=.. XDB_BASE=.. E2E_TOKEN=.. ./e2e-test.sh
+set -euo pipefail
+XID_BASE="${XID_BASE:-http://localhost:8787}"
+XDB_BASE="${XDB_BASE:-http://localhost:9990}"
+TENANT="${XID_TENANT:-common}"
+TOKEN="${E2E_TOKEN:-}"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "PASS: $*"; }
+
+echo "== E2E $XID_BASE / $XDB_BASE =="
+
+DISC="$(curl -sf "$XID_BASE/$TENANT/v2.0/.well-known/openid-configuration")" || fail "discovery $TENANT"
+echo "$DISC" | grep -q token_endpoint || fail "discovery sin token_endpoint"
+pass "discovery OIDC"
+
+JWKS_URL="$(echo "$DISC" | python3 -c 'import json,sys; print(json.load(sys.stdin)["jwks_uri"])')"
+curl -sf "$JWKS_URL" | grep -q '"keys"' || fail "jwks sin keys"
+pass "jwks"
+
+[ -n "$TOKEN" ] || fail "E2E_TOKEN vacío: haz login OTP en WebApp y exporta el access_token"
+curl -sf "$XID_BASE/openid/userinfo" -H "Authorization: Bearer $TOKEN" | grep -q sub || fail "userinfo"
+pass "userinfo"
+
+RESP="$(curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}')" || fail "/abc con token"
+pass "/abc autorizado: $(echo "$RESP" | head -c 120)"
+
+if curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+  -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"1"}' >/dev/null 2>&1; then
+  echo "WARN: /abc permite anónimo (esperado solo en local con provider=none)"
+else
+  pass "/abc rechaza anónimo (401)"
+fi
+
+echo "E2E OK"

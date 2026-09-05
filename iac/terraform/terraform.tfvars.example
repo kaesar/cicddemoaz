@@ -1,0 +1,14 @@
+subscription_id       = "00000000-0000-0000-0000-000000000000"
+prefix                = "onmind-ej"
+location              = "westeurope"
+resource_group_name   = "rg-onmind-ejercicio"
+xid_image             = "<acr>.azurecr.io/xid:latest"
+xdb_image             = "<acr>.azurecr.io/xdb:latest"
+xid_tenant            = "common"
+xid_client_id         = "my-webapp"
+xid_cors_origins      = "http://localhost:3000,https://<swa-host>"
+xdb_oidc_audience     = "api://my-webapp"
+cosmos_db_name        = "onmind"
+cosmos_container_name = "kv"
+cosmos_throughput     = 400
+enable_swa            = true
