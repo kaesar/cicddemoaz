@@ -4,15 +4,15 @@
 
 ```mermaid
 flowchart LR
-  User([Usuario]) -->|"abre :3000"| WebApp["WebApp Dummy<br/>React + MSAL.js<br/>Container: app / SWA"]
+  User([Usuario]) -->|"abre :3000"| WebApp["WebApp Dummy<br/>React + PKCE manual<br/>Container: app / SWA"]
   WebApp -->|"1. authorize + PKCE<br/>/{tenant}/oauth2/v2.0/authorize"| XID["OnMind-XID<br/>Bun + Hono<br/>Container App: xid<br/>:8787"]
   XID -->|"2. OTP allowlist<br/>userbase.txt"| Mail[("OTP mock / log")]
   XID -->|"3. code"| WebApp
   WebApp -->|"4. /token<br/>code + code_verifier"| XID
   XID -->|"5. Access + Id Token RS256<br/>JWKS"| WebApp
   WebApp -->|"6. POST /abc<br/>Bearer access_token"| XDB["OnMind-XDB<br/>Kotlin + http4k<br/>Container App: xdb<br/>:9990"]
-  XDB -->|"7. valida JWT<br/>OIDCPlug / CognitoPlug<br/>JWKS iss/aud/exp"| XID
-  XDB -->|"8. kv.store=cosmos<br/>savePoint / find"| Cosmos[("Cosmos DB SQL API<br/>db + container")]
+  XDB -->|"7. valida JWT<br/>HS256 con secreto o decode-only<br/>iss"| XID
+  XDB -->|"8. kv.store=cosmosdb<br/>insert / find"| Cosmos[("Cosmos DB SQL API<br/>db + container")]
   XDB -->|"9. JSON listado"| WebApp
   WebApp -->|"10. render tabla"| User
 
@@ -35,14 +35,13 @@ flowchart LR
 ```
 ┌─────────────────────┐     OIDC / Entra facade      ┌──────────────────────┐
 │  WebApp Dummy       │ ───────────────────────────► │  OnMind-XID (IdP)    │
-│  (React + MSAL.js)  │ ◄── Access / Id Token        │  (Bun + Hono)        │
+│(React + PKCE manual)│ ◄── Access / Id Token        │  (Bun + Hono)        │
 └─────────┬───────────┘                              └──────────────────────┘
-          │
-          │ Bearer Token + llamadas REST
+          │ Bearer Token + POST /abc
           ▼
 ┌─────────────────────┐     Persistencia KV          ┌──────────────────────┐
 │  OnMind-XDB         │ ───────────────────────────► │  Azure Cosmos DB     │
-│  (Kotlin + http4k)  │                              │                      │
+│  (Kotlin + http4k)  │                              │  SQL API             │
 │  /abc  ·  /files    │                              └──────────────────────┘
 └─────────────────────┘
 ```
@@ -52,8 +51,8 @@ flowchart LR
 | Componente | Origen / Tec | Rol | Notas clave |
 |---|---|---|---|
 | IdP | onmind-xid (Bun+Hono) | Simula Entra ID (OIDC + subset Cognito) | Facade Entra: `/.well-known/openid-configuration`, authorize, token, userinfo, JWKS. OTP + allowlist `userbase.txt`. |
-| API/DB | onmind-xdb (Kotlin+http4k) | Servicio datos | Principal `/abc` (POST JSON `AbcAPI`). KV `cosmos` + `CosmosPlug`. Auth `AuthProvider` Strategy (OIDCPlug/CognitoPlug). |
-| WebApp | `app/` React+Vite+`@azure/msal-browser` | Cliente | loginRedirect → token → `POST /abc` con Bearer. |
+| API/DB | onmind-xdb (Kotlin+http4k) | Servicio datos | Principal `/abc` (POST JSON `AbcAPI`). KV `mvstore`/`cosmosdb` (`KVStoreFactory`). Auth `auth.type=ENTRAID` (`AuthConfig` + `OIDCPlug`). |
+| WebApp | `app/` React+Vite+PKCE manual (`fetch`, sin MSAL) | Cliente | authorize → token → `POST /abc` con Bearer. |
 | Persistencia | Cosmos DB SQL API | Backend XDB | Cuenta + database + container. Emulador local para dev. |
 | Infra | Container Apps + ACR + Cosmos + KV + SWA | Host | 100% Terraform en `iac/terraform/`. |
 | CI/CD | Azure DevOps Pipelines | Build→Test→Deploy→Smoke | `pipe/azure-pipelines.yml`. |
@@ -76,38 +75,50 @@ Secrets nunca en código: Key Vault + Managed Identity o `variableGroup` del pip
 
 ### XID (`config/xid.env.example`)
 
-- `PORT=8787`
-- `XID_TENANT=common` — tenant facade Entra (`common` / guid).
-- `XID_ISSUER=https://<xid-host>/<tenant>/v2.0` — debe coincidir con `iss` que valida XDB.
-- `XID_JWKS_RSA_PRIVATE_JSON` (Key Vault `xid-rsa-jwk`) — clave RS256 firma.
-- `XID_JWT_SECRET` (KV) — fallback HS256 si aplica.
-- `XID_CORS_ORIGINS=http://localhost:3000,https://<swa-host>` — CORS.
-- `XID_USERBASE_PATH=userbase.txt`, `XID_OTP_TTL=300`, `XID_OTP_MOCK=true` (dev).
+- `PORT=8787` (`Bun.serve` http; xid **no sirve HTTPS**).
+- `XID_ENV=dev` — dev: `redirect_uri` abierto + OTP por consola si no hay SMTP; `production` lo exige todo.
+- `XID_TENANT_ID=xid` — tenant por defecto cuando la URL usa `/common`, `/organizations` o `/consumers`.
+- `XID_REDIRECT_ALLOWLIST=http://localhost:3000/*` — obligatorio solo en `production`.
+- `XID_CORS_ORIGINS=http://localhost:3000,https://<swa-host>` — CORS (imprescindible para el `POST /token` desde el navegador).
+- `XID_USERS_TXT=userbase.txt` — allowlist de emails (por defecto `./userbase.txt` del repo xid).
+- `XID_RSA_PRIVATE_JWK` (Key Vault `xid-rsa-jwk`) — JWK privada RS256; si se omite, claves efímeras por arranque.
+- `XID_JWT_SECRET` (KV) — HMAC solo para flujos HS256/sesión; **no** valida los RS256 de la fachada Entra.
+- `iss` y discovery **derivan del Host de la petición** (`originOf(req)` en `src/entra.js`): no existe
+  `XID_ISSUER`. Tras un proxy TLS hay que preservar el header `Host` o el `iss` saldrá en http.
 
 ### XDB (`config/onmind.ini.example`)
 
+> XDB solo lee `onmind.ini` como Properties (`Rote`); **ignora variables de entorno**.
+> Claves reales (`AuthConfig` + `KVStoreFactory`).
+
 ```ini
-[server]
-port=9990
-[auth]
-provider=oidc            ; oidc | cognito | none (solo local sin auth)
-oidc.issuer=http://localhost:8787/common/v2.0
-oidc.audience=api://xid-xdb / <client-id>
-oidc.jwksUrl=http://localhost:8787/common/discovery/v2.0/keys
-oidc.requiredClaims=sub,exp,iss
-[kv]
-store=cosmos             ; memory | h2 | cosmos
-cosmos.endpoint=https://<cuenta>.documents.azure.com:443/
-cosmos.key=<KV ref>
-cosmos.database=onmind
-cosmos.container=kv
+dai.port = 9990
+dai.cors = *
+
+auth.enabled = true
+auth.type = ENTRAID
+auth.oidc.url = http://localhost:8787
+auth.oidc.client_id = my-webapp
+# JwtValidator solo verifica HS256 con secreto; los token Entra de XID son RS256:
+# sin auth.jwt.secret se acepta el payload decodificado SIN verificar firma (solo dev).
+# auth.jwt.secret = <solo si los tokens son HS256>
+
+kv.store = mvstore
+kv.mvstore.name = xybox
+# kv.store = cosmosdb
+# kv.cosmosdb.endpoint = https://<cuenta>.documents.azure.com:443/
+# kv.cosmosdb.key = <key de Key Vault>
+# kv.cosmosdb.database = onmind
+# kv.cosmosdb.container = kvstore
 ```
 
-En Container Apps se inyecta vía `secrets` con `keyVaultUrl` o `secretRef`.
+En Container Apps el fichero no se puede montar sin Azure Files: pendiente definir la entrega
+(entrypoint que genere el ini desde env — ver `container-apps.tf`).
 
 ### WebApp (`app/.env.example`)
 
-- `VITE_XID_AUTHORITY=https://<xid-host>/common` (local: `http://localhost:8787/common`)
+- `VITE_XID_AUTHORITY=https://<xid-host>/common` (local: `http://localhost:8787/common`).
+  Sin MSAL no hay requisito de https: el flujo PKCE manual usa `fetch` directo.
 - `VITE_XID_CLIENT_ID=<app-registration-id>` — debe existir como `aud` válido en XID.
 - `VITE_XDB_API_URL=http://localhost:9990` (Azure: `https://<xdb-host>`)
 - `VITE_XDB_API_SCOPE=api://<client-id>/access_as_user` o `openid profile`.
@@ -122,4 +133,4 @@ En Container Apps se inyecta vía `secrets` con `keyVaultUrl` o `secretRef`.
 2. `/abc` como endpoint principal (compatible `AbcAPI` existente).
 3. Cosmos SQL API con partición `/id` (simple para KV genérico).
 4. Terraform único IaC; sin Ansible.
-5. MSAL `loginRedirect` + PKCE (S256); `sessionStorage` para tokens.
+5. PKCE manual en la SPA (`fetch`, S256 vía WebCrypto, sin MSAL); `sessionStorage` para tokens.

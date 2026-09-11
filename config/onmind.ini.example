@@ -1,25 +1,26 @@
-[server]
-port=9990
-corsOrigins=http://localhost:3000
+# XDB solo lee este fichero como Properties (Rote: ./onmind.ini, ../onmind.ini o /app/onmind.ini).
+# NO lee variables de entorno. Copiar a config/onmind.ini (gitignored) u onmind.ini según arranque.
+# Puertos/servidor
+dai.port = 9990
+dai.host = http://localhost
+dai.cors = *
 
-[auth]
-# provider: oidc | cognito | none (none solo local)
-provider=oidc
-oidc.issuer=http://localhost:8787/common/v2.0
-oidc.audience=api://my-webapp
-oidc.jwksUrl=http://localhost:8787/common/discovery/v2.0/keys
-oidc.requiredClaims=sub,exp,iss
-# En Azure: issuer=https://<xid-fqdn>/common/v2.0, jwksUrl=https://<xid-fqdn>/common/discovery/v2.0/keys
-# Cognito subset alternativo:
-# provider=cognito
-# cognito.jwksUrl=<xid>/.well-known/jwks.json
+# Auth: ENTRAID acepta `Authorization: Bearer <token de XID>`.
+# REALIDAD (JwtValidator): solo verifica HS256 con secreto compartido; los access token de la
+# fachada Entra de XID son RS256. Sin auth.jwt.secret se acepta el payload decodificado
+# SIN verificar firma (solo dev). No pongas secret con tokens RS256 (daría 401).
+auth.enabled = true
+auth.type = ENTRAID
+auth.oidc.url = http://localhost:8787
+auth.oidc.client_id = my-webapp
+# auth.jwt.secret = <solo si los tokens son HS256>
+# auth.jwt.issuer = http://localhost:8787/common/v2.0
 
-[kv]
-# store: memory | h2 | cosmos
-store=memory
-# Para Fase 3 / Azure, cambiar a:
-# store=cosmos
-# cosmos.endpoint=https://<cuenta>.documents.azure.com:443/
-# cosmos.key=${COSMOS_KEY}            ; inyectado desde Key Vault (Container App secret)
-# cosmos.database=onmind
-# cosmos.container=kv
+# Persistencia local; para Cosmos DB (Fase 3): kv.store = cosmosdb + kv.cosmosdb.*
+kv.store = mvstore
+kv.mvstore.name = xybox
+# kv.store = cosmosdb
+# kv.cosmosdb.endpoint = https://<cuenta>.documents.azure.com:443/
+# kv.cosmosdb.key = <key de Key Vault>
+# kv.cosmosdb.database = onmind
+# kv.cosmosdb.container = kvstore

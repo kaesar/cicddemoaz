@@ -1,44 +1,44 @@
-# Ejercicio Integración: WebApp + XID (Entra facade) + XDB (Cosmos DB) en Azure
+# Integration Exercise: WebApp + XID (Entra facade) + XDB (Cosmos DB) on Azure
 
-Escenario completo de integración pensado para Azure:
+Full integration scenario designed for Azure:
 
-- **WebApp dummy** (React + `@azure/msal-browser`) autentica usuarios contra **OnMind-XID** (`../xid` o `https://github.com/kaesar/onmind-xid`) que simula **Microsoft Entra ID** (facade OIDC).
-- Tras login, la WebApp obtiene listado desde **OnMind-XDB** (`../xdb` o `https://github.com/kaesar/onmind-xdb`, endpoints `/abc` y `/files`).
-- XDB persiste en **Azure Cosmos DB (SQL API)** vía `kv.store=cosmos` + `CosmosPlug`.
-- Infra 100% **Terraform**: RG, Cosmos DB, ACR, Container Apps Environment + 2 Container Apps (XID/XDB), Static Web Apps (opcional), Key Vault + Managed Identity.
-- CI/CD con **Azure DevOps Pipelines** multi-stage: Build → Test → Deploy (ACR + Terraform) → Smoke E2E.
+- **Dummy WebApp** (React + manual PKCE with `fetch`, no MSAL) authenticates users against [**OnMind-XID**](https://github.com/kaesar/onmind-xid), which simulates **Microsoft Entra ID** (OIDC facade).
+- After login, the WebApp fetches a data listing from [**OnMind-XDB**](https://github.com/kaesar/onmind-xdb) (`/abc` and `/files` endpoints).
+- XDB persists to **Azure Cosmos DB (SQL API)** via `kv.store=cosmosdb` (`KVStoreFactory` → `CosmosPlug`).
+- 100% **Terraform** infra: RG, Cosmos DB, ACR, Container Apps Environment + 2 Container Apps (XID/XDB), Static Web Apps (optional), Key Vault + Managed Identity.
+- CI/CD with multi-stage **Azure DevOps Pipelines**: Build → Test → Deploy (ACR + Terraform) → Smoke E2E.
 
 ```
 ┌─────────────────────┐     OIDC / Entra facade      ┌──────────────────────┐
-│  WebApp Dummy       │ ───────────────────────────► │  OnMind-XID (IdP)    │
-│  (React + MSAL.js)  │ ◄── Access / Id Token        │  (Bun + Hono)        │
+│  Dummy WebApp       │ ───────────────────────────► │  OnMind-XID (IdP)    │
+│(React + manual PKCE)│ ◄── Access / Id Token        │  (Bun + Hono)        │
 └─────────┬───────────┘                              └──────────────────────┘
           │ Bearer Token + POST /abc
           ▼
-┌─────────────────────┐     Persistencia KV          ┌──────────────────────┐
+┌─────────────────────┐     KV persistence           ┌──────────────────────┐
 │  OnMind-XDB         │ ───────────────────────────► │  Azure Cosmos DB     │
 │  (Kotlin + http4k)  │                              │  SQL API             │
 │  /abc  ·  /files    │                              └──────────────────────┘
 └─────────────────────┘
 ```
 
-## Estructura
+## Structure
 
 ```
-./  (raíz del proyecto)
+./  (project root)
 ├── README.md
-├── docker-compose.yml          # referencia local: XID :8787 + XDB :9990 + WebApp :3000
+├── docker-compose.yml          # local reference: XID :8787 + XDB :9990 + WebApp :3000
 ├── .env.example
 ├── config/
-│   ├── onmind.ini.example      # XDB: OIDCPlug/CognitoPlug + CosmosPlug
-│   └── xid.env.example         # XID: facade Entra + CORS + OTP allowlist
+│   ├── onmind.ini.example      # XDB: auth.type=ENTRAID + kv.store (Properties, no sections)
+│   └── xid.env.example         # XID: Entra facade + CORS + OTP allowlist
 ├── docs/
 │   ├── arquitectura.md
 │   ├── flujo-auth.md
 │   └── checklist.md
-├── app/                        # React + Vite + @azure/msal-browser
+├── app/                        # React + Vite + manual PKCE (fetch, no MSAL)
 ├── iac/
-│   └── terraform/              # Único IaC (sin Ansible)
+│   └── terraform/              # Single IaC (no Ansible)
 │       ├── main.tf
 │       ├── variables.tf
 │       ├── outputs.tf
@@ -55,75 +55,85 @@ Escenario completo de integración pensado para Azure:
     └── e2e-test.sh
 ```
 
-## Quickstart local
+## Local quickstart
 
-Requisito: tener `../xid` y `../xdb` clonados (o usar imágenes Docker).
+> **Requirement**: have [**OnMind-XID**](https://github.com/kaesar/onmind-xid) and [**OnMind-XDB**](https://github.com/kaesar/onmind-xdb) cloned.
 
 ```bash
-# 1. XID (IdP facade Entra) - puerto 8787
-cd ../../xid
+# 1. OnMind-XID (Entra facade IdP) - port 8787
+git clone --depth 1 https://github.com/kaesar/onmind-xid.git xid
+cd xid
 echo "alice@example.com" > userbase.txt
-bun install && bun run dev
-# verificar discovery:
+bun install
+# Environment variables
+XID_JWT_SECRET=$(openssl rand -hex 32) XID_CORS_ORIGINS=http://localhost:3000 bun dev &
+# check discovery:
 curl http://localhost:8787/common/v2.0/.well-known/openid-configuration | jq
 
-# 2. XDB (API) - puerto 9990, con auth OIDC hacia XID
-cd ../../xdb
-cp ./config/onmind.ini.example ./onmind.ini
-./gradlew run
-curl -X POST http://localhost:9990/abc -H 'Content-Type: application/json' \
-  -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}'
+# 2. OnMind-XDB (NoSQL - DB-API) - port 9990, with OIDC auth towards XID
+cd ..
+git clone --depth 1 https://github.com/kaesar/onmind-xdb.git xdb
+# XDB only reads onmind.ini (ignores env): single source in ../config/onmind.ini
+cp ./config/onmind.ini.example ./config/onmind.ini
+ln -sf config/onmind.ini onmind.ini  # Rote looks for ../onmind.ini from xdb/
+cd xdb
+./gradlew run &
+curl http://localhost:9990/health -H 'Content-Type: application/json' | jq
 
-# 3. WebApp - puerto 3000
+# 3. WebApp - port 3000
 cd ./app
 cp .env.example .env
-npm install && npm run dev
-# abrir http://localhost:3000 → Login → Listar datos
+bun install
+bun dev
 ```
 
-O con Docker Compose (referencia):
+> Open `http://localhost:3000` in your browser  
+> Using `&`, `xid` and `xdb` stay available in the background; you can also skip it and open several terminals for local monitoring
+<!--
+Or with Docker Compose (reference):
 
 ```bash
 docker compose up --build
 ```
+-->
+## Main flow
 
-## Flujo principal
+1. User opens the WebApp → navigates to XID `/{tenant}/oauth2/v2.0/authorize` with PKCE (S256, WebCrypto).
+2. XID: email form → OTP (allowlist `userbase.txt`) → issues `authorization_code`.
+3. WebApp exchanges `code` at `/token` → Access + Id Token (RS256).
+4. WebApp calls `POST /abc` with `Authorization: Bearer <access_token>`.
+5. XDB validates the Bearer (`auth.type=ENTRAID`: HS256 with secret or signature-less decoded payload
+   in dev; no JWKS calls) → queries KV (local mvstore / Cosmos DB on Azure) → returns the listing.
+6. WebApp renders the table.
 
-1. Usuario abre WebApp → `loginRedirect` a XID `/{tenant}/oauth2/v2.0/authorize` con PKCE.
-2. XID: formulario email → OTP (allowlist `userbase.txt`) → emite `authorization_code`.
-3. WebApp intercambia `code` en `/token` → Access + Id Token (RS256).
-4. WebApp llama `POST /abc` con `Authorization: Bearer <access_token>`.
-5. XDB valida token (OIDCPlug/CognitoPlug: JWKS, `iss/aud/exp`, `sub/oid/tid`) → consulta KV (H2 local / Cosmos en Azure) → devuelve listado.
-6. WebApp renderiza tabla.
+Details in `docs/flujo-auth.md`. Variables/secrets in `docs/arquitectura.md` and `config/`.
 
-Detalle en `docs/flujo-auth.md`. Variables/secrets en `docs/arquitectura.md` y `config/`.
-
-## Despliegue Azure
+## Azure deployment
 
 ```bash
 cd iac/terraform
-cp terraform.tfvars.example terraform.tfvars  # rellenar tenant, subscription, secrets
+cp terraform.tfvars.example terraform.tfvars  # fill in tenant, subscription, secrets
 az login
 terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-Pipeline: ver `pipe/azure-pipelines.yml`. Requiere Service Connection `azure-rm-sc`, ACR, Key Vault y variable groups.
+Pipeline: see `pipe/azure-pipelines.yml`. Requires Service Connection `azure-rm-sc`, ACR, Key Vault and variable groups.
 
-## Quick start en Azure
+## Quick start on Azure
 
-> El pipeline hace checkout automático de [`onmind-xid`](https://github.com/kaesar/onmind-xid)
-> y [`onmind-xdb`](https://github.com/kaesar/onmind-xdb) vía `resources: repositories:`
-> (service connection GitHub `github-sc`). No necesitas clonar esos repos en local ni en el agente.
+> The pipeline auto-checkouts [`onmind-xid`](https://github.com/kaesar/onmind-xid)
+> and [`onmind-xdb`](https://github.com/kaesar/onmind-xdb) via `resources: repositories:`
+> (GitHub `github-sc` service connection). You don't need to clone those repos locally or on the agent.
 
-### 0. Prerrequisitos
+### 0. Prerequisites
 
-- `az` CLI, Terraform >= 1.6 y permisos de Contributor en la subscription.
-- En Azure DevOps: service connections `azure-rm-sc` (Azure ARM) y `github-sc`
-  (GitHub, PAT con lectura a los repos xid/xdb), más el variable group `ejercicio-xid-xdb-vars`.
+- `az` CLI, Terraform >= 1.6 and Contributor permissions on the subscription.
+- In Azure DevOps: `azure-rm-sc` (Azure ARM) and `github-sc` service connections
+  (GitHub, PAT with read access to the xid/xdb repos), plus the `ejercicio-xid-xdb-vars` variable group.
 
-### 1. Login, subscription y providers
+### 1. Login, subscription and providers
 
 ```bash
 az login
@@ -136,7 +146,7 @@ az provider register -n Microsoft.Web --wait
 az provider register -n Microsoft.OperationalInsights --wait
 ```
 
-### 2. Storage para el tfstate (lo exige el pipeline)
+### 2. Storage for tfstate (required by the pipeline)
 
 ```bash
 az group create -n rg-tfstate -l westeurope
@@ -144,47 +154,43 @@ az storage account create -n <sttfstatexxx> -g rg-tfstate --sku Standard_LRS
 az storage container create -n tfstate --account-name <sttfstatexxx>
 ```
 
-### 3. Variable group `ejercicio-xid-xdb-vars` (Pipelines → Library)
+### 3. `ejercicio-xid-xdb-vars` variable group (Pipelines → Library)
 
-| Variable | Valor inicial |
+| Variable | Initial value |
 |---|---|
 | `TFSTATE_RG` / `TFSTATE_SA` | `rg-tfstate` / `<sttfstatexxx>` |
-| `ACR_NAME` / `ACR_LOGIN_SERVER` | se rellenan tras el bootstrap (paso 4) |
+| `ACR_NAME` / `ACR_LOGIN_SERVER` | filled in after bootstrap (step 4) |
 | `PREFIX` / `LOCATION` | `onmind-ej` / `westeurope` |
-| `XID_BASE` / `XDB_BASE` / `E2E_TOKEN` / `XID_TENANT` | se rellenan tras el primer deploy |
+| `XID_BASE` / `XDB_BASE` / `E2E_TOKEN` / `XID_TENANT` | filled in after the first deploy |
 
-### 4. Bootstrap de infra (una vez, en local, con imágenes placeholder)
+### 4. Infra bootstrap (once, locally, with placeholder images)
 
 ```bash
 cd iac/terraform
-cp terraform.tfvars.example terraform.tfvars  # rellenar subscription_id, prefix, location
+cp terraform.tfvars.example terraform.tfvars  # fill in subscription_id, prefix, location
 terraform init -backend=false
 terraform validate
 terraform apply \
   -var 'xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' \
   -var 'xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-# anotar outputs: acr_login_server, xid_url, xdb_url, key_vault_uri
+# note the outputs: acr_login_server, xid_url, xdb_url, key_vault_uri
 ```
 
-### 5. Completar variables y lanzar el pipeline
+### 5. Fill in variables and run the pipeline
 
-1. En el variable group: `ACR_NAME=<nombre>` y `ACR_LOGIN_SERVER=<salida acr_login_server>`.
-2. Crear el pipeline desde `pipe/azure-pipelines.yml` y ejecutarlo (Build → Test → Deploy → Smoke).
-   El stage Deploy construye las imágenes de `xid`, `xdb` (repos externos) y `app` y las sube a ACR.
-3. Guardar el secreto RSA de XID en Key Vault:
+1. In the variable group: `ACR_NAME=<name>` and `ACR_LOGIN_SERVER=<acr_login_server output>`.
+2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build → Test → Deploy → Smoke).
+   The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR.
+3. Store the XID RSA secret in Key Vault:
    ```bash
-   az keyvault secret set --vault-name <kv-del-output> -n xid-rsa-jwk --file ./xid-rsa-jwk.json
+   az keyvault secret set --vault-name <kv-from-output> -n xid-rsa-jwk --file ./xid-rsa-jwk.json
    ```
-4. Re-ejecutar el stage Deploy para que las Container Apps tomen los secretos.
+4. Re-run the Deploy stage so the Container Apps pick up the secrets.
 
-### 6. Smoke test manual
+### 6. Manual smoke test
 
 ```bash
-export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<access_token-otp>"
+export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<otp-access_token>"
 ./scripts/e2e-test.sh
 curl -s "$XID_BASE/common/v2.0/.well-known/openid-configuration" | head -c 300; echo
 ```
-
-## Checklist entregables
-
-Ver `docs/checklist.md`.

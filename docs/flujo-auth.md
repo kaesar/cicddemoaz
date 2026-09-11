@@ -5,13 +5,13 @@
 ```mermaid
 sequenceDiagram
   actor U as Usuario
-  participant W as WebApp (MSAL)
+  participant W as WebApp (PKCE manual)
   participant XID as XID tenant facade
   participant XDB as XDB abc
   participant KV as Cosmos DB
 
   U->>W: "abre http://localhost:3000"
-  W->>W: "msal loginRedirect(authority, clientId, scopes, PKCE S256)"
+  W->>W: "genera PKCE + state (WebCrypto, app/src/auth/pkce.ts)"
   W->>XID: "GET tenant/oauth2/v2.0/authorize?client_id&redirect_uri&code_challenge&response_type=code"
   XID->>U: "formulario email"
   U->>XID: "POST email"
@@ -26,8 +26,8 @@ sequenceDiagram
   XID->>W: "sub, email, oid, tid"
   U->>W: "clic Listar datos"
   W->>XDB: "POST /abc Bearer access_token {what:find, from:xyany, some:PRODUCTS.SHEET, size:50}"
-  XDB->>XID: "GET .well-known/openid-configuration / JWKS (cache)"
-  XDB->>XDB: "valida iss/aud/exp/sub-oid-tid + firma RS256"
+  XDB->>XID: "sin llamada: valida en local (HS256 o decode-only)"
+  XDB->>XDB: "verifica iss/exp (+ firma solo si auth.jwt.secret HS256)"
   XDB->>KV: "find (CosmosPlug)"
   KV->>XDB: "docs"
   XDB->>W: "200 filas JSON"
@@ -44,10 +44,10 @@ XDB=http://localhost:9990
 # 1. Discovery
 curl $XID/$TENANT/v2.0/.well-known/openid-configuration | jq '{issuer,authorization_endpoint,token_endpoint,jwks_uri}'
 
-# 2. Authorize (abrir en navegador; PKCE lo genera MSAL automáticamente)
+# 2. Authorize (abrir en navegador; el challenge lo genera app/src/auth/pkce.ts con WebCrypto)
 echo "$XID/$TENANT/oauth2/v2.0/authorize?client_id=<CLIENT_ID>&response_type=code&redirect_uri=http://localhost:3000/&scope=openid%20profile%20api://<CLIENT_ID>/access_as_user&code_challenge=<CHALLENGE>&code_challenge_method=S256&state=xyz"
 
-# 3. Token (lo hace MSAL; equivalente curl post-login con code real)
+# 3. Token (lo hace la app con fetch; equivalente curl post-login con code real)
 curl -X POST $XID/$TENANT/oauth2/v2.0/token \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode grant_type=authorization_code \
@@ -70,12 +70,16 @@ curl $XDB/files -H "Authorization: Bearer <ACCESS_TOKEN>"
 
 ## Validación en XDB
 
-XDB (`OIDCPlug` / `CognitoPlug`, pattern `AuthProvider`):
+XDB (`auth.type=ENTRAID` → `OIDCPlug`, sin llamadas de red):
 
-- Descarga JWKS (`jwksUrl`), cache 10 min.
-- Verifica firma RS256, `iss == oidc.issuer`, `aud` contiene `oidc.audience`, `exp > now` (skew 60s).
-- Opcional `tid`/`oid`: si XID emite `tid=<tenant>` y `oid=<sub>`, mapear a `xykey` usuario/rol.
-- `provider=none` solo permitido en local (`ALLOW_ANON=true`); prohibido en Azure (Terraform lo bloquea con var `xdb_auth_enforced=true`).
+- Con `auth.jwt.secret` (HS256): verifica firma + `exp` + `iss == auth.jwt.issuer`.
+- Sin secreto: acepta el payload decodificado **sin verificar firma** (solo dev).
+- XDB **no valida RS256 ni consulta JWKS** en esta versión: no pongas `auth.jwt.secret`
+  si los tokens vienen de la fachada Entra de XID (son RS256 → 401).
+- `client_id` del flujo público no requiere registro: basta no vacío y que coincida
+  entre authorize y token (`redirect_uri mismatch` / `client_id mismatch` si difieren).
+- `redirect_uri` en dev (`XID_ENV=dev` + allowlist vacía) admite cualquier http/https;
+  en `production` debe estar en `XID_REDIRECT_ALLOWLIST`.
 
 Token Id vs Access: WebApp envía **access_token** a XDB. `id_token` solo para UI (nombre/email).
 
@@ -83,8 +87,10 @@ Token Id vs Access: WebApp envía **access_token** a XDB. `id_token` solo para U
 
 | Síntoma | Causa | Fix |
 |---|---|---|
-| `invalid_client` en /token | `client_id` no registrado en XID | Añadir a config XID / misma var en WebApp y XDB audience |
-| `code_verifier` fail | PKCE S256 mal generado | Dejar que MSAL lo genere; no reinventar |
-| `401 invalid_token` en XDB | `iss` distinto (localhost vs FQDN) | Igualar `XID_ISSUER` y `oidc.issuer` incl. tenant |
+| `invalid_client` en /token | `client_id` vacío o distinto al de authorize | Reutilizar el mismo `client_id` en ambas llamadas |
+| `code_verifier` fail | PKCE S256 mal generado | Generar con WebCrypto (SHA-256 + base64url sin padding), como `app/src/auth/pkce.ts` |
+| `401 invalid_token` en XDB | `auth.jwt.secret` con tokens RS256, o `iss` distinto | Sin secreto en dev (decode-only); `iss` = origen real de XID |
+| CORS missing + `401` en `/abc` | El 401 sale sin cabeceras (auth está fuera de Cors en xdb) o el preflight OPTIONS es rechazado | Parche aplicado en `xdb/onmindxdb.kt` (Cors fuera de auth + `Authorization` en allow-headers); reiniciar xdb |
+| XDB ignora tu ini | `Rote` carga `../onmind.ini` → `~/onmind/onmind.ini` → `/app/onmind.ini` → `./onmind.ini` | Mira la línea `<fichero> --> Checked OK!` al arrancar; `dai.cors` no se lee (CORS va fijo en código) |
 | CORS bloqueado | `XID_CORS_ORIGINS` sin origen webapp | Añadir `http://localhost:3000` y host SWA |
-| OTP nunca llega | `XID_OTP_MOCK=false` sin SMTP | Poner `true` en local; leer OTP en logs |
+| OTP nunca llega | Buscarlo en el email | En dev sale por consola `[xid:mail:console]` (o Mailpit en 127.0.0.1:1025) |
