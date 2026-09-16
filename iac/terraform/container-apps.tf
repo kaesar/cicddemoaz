@@ -42,7 +42,11 @@ resource "azurerm_container_app" "xid" {
         value = "8787"
       }
       env {
-        name  = "XID_TENANT"
+        name  = "XID_ENV"
+        value = var.xid_env # dev: OTP por logs + redirect abierto (ejercicio); production exige SMTP + allowlist
+      }
+      env {
+        name  = "XID_TENANT_ID"
         value = var.xid_tenant
       }
       env {
@@ -50,8 +54,20 @@ resource "azurerm_container_app" "xid" {
         value = var.xid_cors_origins
       }
       env {
-        name        = "XID_JWKS_RSA_PRIVATE_JSON"
+        name  = "XID_USERS_TXT"
+        value = "/data/xusers.txt"
+      }
+      env {
+        name  = "XID_CLIENTS_TXT"
+        value = "/data/xclients.txt"
+      }
+      env {
+        name        = "XID_RSA_PRIVATE_JWK"
         secret_name = "xid-rsa-jwk"
+      }
+      volume_mounts {
+        name = "xid-data"
+        path = "/data"
       }
 
       liveness_probe {
@@ -60,8 +76,13 @@ resource "azurerm_container_app" "xid" {
         path      = "/health"
       }
     }
+    volume {
+      name         = "xid-data"
+      storage_name = azurerm_container_app_environment_storage.xid_data.name
+      storage_type = "AzureFile"
+    }
     min_replicas = 0 # scale-to-zero: sin tráfico no consume (ejercicio)
-    max_replicas = 3
+    max_replicas = 1 # 1 réplica: xid/xdb guardan estado en memoria sin afinidad de sesión
   }
 
   tags = var.tags
@@ -111,26 +132,23 @@ resource "azurerm_container_app" "xdb" {
       cpu    = 0.5
       memory = "1Gi"
 
-      # OIDC hacia XID (issuer = FQDN del Container App xid + tenant)
+      # xdb solo lee onmind.ini: scripts/entrypoint-xdb.sh lo genera desde estas
+      # env al arrancar. COSMOS_ENDPOINT/KEY llegan por referencia a Key Vault.
       env {
-        name  = "XDB_AUTH_PROVIDER"
-        value = var.xdb_auth_enforced ? "oidc" : "oidc"
+        name  = "XDB_AUTH_TYPE"
+        value = "ENTRAID"
       }
       env {
-        name  = "XDB_OIDC_ISSUER"
-        value = "https://${azurerm_container_app.xid.ingress[0].fqdn}/${var.xid_tenant}/v2.0"
+        name  = "XDB_OIDC_URL"
+        value = "https://${azurerm_container_app.xid.ingress[0].fqdn}"
       }
       env {
-        name  = "XDB_OIDC_AUDIENCE"
-        value = var.xdb_oidc_audience
+        name  = "XDB_OIDC_CLIENT_ID"
+        value = var.xdb_oidc_client_id
       }
       env {
-        name  = "XDB_OIDC_JWKS_URL"
-        value = "https://${azurerm_container_app.xid.ingress[0].fqdn}/${var.xid_tenant}/discovery/v2.0/keys"
-      }
-      env {
-        name  = "KV_STORE"
-        value = "cosmos"
+        name  = "XDB_KV_STORE"
+        value = "cosmosdb"
       }
       env {
         name        = "COSMOS_ENDPOINT"
@@ -156,7 +174,7 @@ resource "azurerm_container_app" "xdb" {
       }
     }
     min_replicas = 0 # scale-to-zero: sin tráfico no consume (ejercicio)
-    max_replicas = 3
+    max_replicas = 1 # 1 réplica: xid/xdb guardan estado en memoria sin afinidad de sesión
   }
 
   tags = var.tags

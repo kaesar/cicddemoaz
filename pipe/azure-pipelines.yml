@@ -14,6 +14,13 @@ pr:
   branches:
     include: [main]
 
+# destroy=false por defecto: el stage Destroy solo corre en runs manuales con la casilla marcada.
+parameters:
+  - name: destroy
+    displayName: 'Destruir infra (terraform destroy, solo manual)'
+    type: boolean
+    default: false
+
 # Repos externos: se clonan junto al self checkout (s/xid, s/xdb).
 # Requiere service connection GitHub `github-sc` (PAT con read a ambos repos).
 resources:
@@ -111,6 +118,10 @@ stages:
               bun install && bun test || bun run test || echo "XID sin tests: pendiente"
             workingDirectory: '$(System.DefaultWorkingDirectory)/xid'
             displayName: 'XID tests'
+          # JDK 21 también aquí: cada job usa agente fresco y el test compila a release 21
+          - task: JavaToolInstaller@0
+            inputs: { versionSpec: '21', jdkArchitectureOption: 'x64', jdkSourceOption: 'PreInstalled' }
+            displayName: 'JDK 21'
           - task: Gradle@3
             inputs:
               workingDirectory: '$(System.DefaultWorkingDirectory)/xdb'
@@ -152,13 +163,38 @@ stages:
                 az acr login -n $(ACR_NAME)
                 docker build -t $ACR/xid:$(Build.BuildId) -t $ACR/xid:latest xid
                 docker push $ACR/xid:$(Build.BuildId); docker push $ACR/xid:latest
-                docker build -t $ACR/xdb:$(Build.BuildId) -t $ACR/xdb:latest xdb
+                docker build -f scripts/Dockerfile.xdb -t $ACR/xdb:$(Build.BuildId) -t $ACR/xdb:latest .
                 docker push $ACR/xdb:$(Build.BuildId); docker push $ACR/xdb:latest
                 docker build -t $ACR/app:$(Build.BuildId) -t $ACR/app:latest app
                 docker push $ACR/app:$(Build.BuildId); docker push $ACR/app:latest
           - task: TerraformInstaller@1
             inputs: { terraformVersion: '$(TF_VERSION)' }
             displayName: 'Instalar Terraform'
+          # Files: share xid-data + subida de xusers/xclients desde variables del grupo.
+          # El share debe existir antes del apply (el Environment Storage lo referencia).
+          - task: AzureCLI@2
+            displayName: 'Files: share + xusers/xclients'
+            inputs:
+              azureSubscription: 'azure-rm-sc'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                SA="$(TFSTATE_SA)"; RG="$(TFSTATE_RG)"; SHARE="$(FILES_SHARE)"
+                KEY=$(az storage account keys list -g "$RG" -n "$SA" --query '[0].value' -o tsv)
+                echo "##vso[task.setvariable variable=TF_VAR_files_storage_account_key;issecret=true]$KEY"
+                az storage share-rm show -g "$RG" --storage-account "$SA" --name "$SHARE" >/dev/null 2>&1 \
+                  || az storage share-rm create -g "$RG" --storage-account "$SA" --name "$SHARE" --quota 1 >/dev/null
+                if [ -n "$(XUSERS_CONTENT)" ]; then
+                  printf '%s' "$(XUSERS_CONTENT)" > /tmp/xusers.txt
+                  az storage file upload --account-name "$SA" --account-key "$KEY" \
+                    --share-name "$SHARE" --path xusers.txt --source /tmp/xusers.txt
+                fi
+                if [ -n "$(XCLIENTS_CONTENT)" ]; then
+                  printf '%s' "$(XCLIENTS_CONTENT)" > /tmp/xclients.txt
+                  az storage file upload --account-name "$SA" --account-key "$KEY" \
+                    --share-name "$SHARE" --path xclients.txt --source /tmp/xclients.txt
+                fi
           - task: TerraformTaskV4@4
             displayName: 'Terraform init'
             inputs:
@@ -176,7 +212,7 @@ stages:
               provider: azurerm
               command: plan
               workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
-              commandOptions: '-out=tfplan -var xid_image=$(ACR_LOGIN_SERVER)/xid:$(Build.BuildId) -var xdb_image=$(ACR_LOGIN_SERVER)/xdb:$(Build.BuildId)'
+              commandOptions: '-out=tfplan -var xid_image=$(ACR_LOGIN_SERVER)/xid:$(Build.BuildId) -var xdb_image=$(ACR_LOGIN_SERVER)/xdb:$(Build.BuildId) -var files_storage_account_name=$(TFSTATE_SA) -var files_share_name=$(FILES_SHARE)'
               environmentServiceNameAzureRM: 'azure-rm-sc'
           - task: TerraformTaskV4@4
             displayName: 'Terraform apply'
@@ -202,3 +238,37 @@ stages:
               XID_BASE: $(XID_BASE)
               XDB_BASE: $(XDB_BASE)
               E2E_TOKEN: $(E2E_TOKEN)
+
+  - stage: Destroy
+    displayName: 'Destroy: terraform destroy (manual)'
+    dependsOn: []
+    condition: eq(${{ parameters.destroy }}, true)
+    jobs:
+      - job: destroy_azure
+        pool: { vmImage: 'ubuntu-latest' }
+        steps:
+          - checkout: self
+            path: s
+          - task: TerraformInstaller@1
+            inputs: { terraformVersion: '$(TF_VERSION)' }
+            displayName: 'Instalar Terraform'
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform init (backend remoto)'
+            inputs:
+              provider: azurerm
+              command: init
+              workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
+              backendServiceArm: 'azure-rm-sc'
+              backendAzureRmResourceGroupName: '$(TFSTATE_RG)'
+              backendAzureRmStorageAccountName: '$(TFSTATE_SA)'
+              backendAzureRmContainerName: tfstate
+              backendAzureRmKey: ejercicio.tfstate
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform destroy'
+            inputs:
+              provider: azurerm
+              command: custom
+              customCommand: 'destroy'
+              commandOptions: '-auto-approve'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
+              environmentServiceNameAzureRM: 'azure-rm-sc'

@@ -1,0 +1,6 @@
+# Contexto del build xdb (scripts/Dockerfile.xdb): excluir peso innecesario.
+.git/
+**/.git/
+**/node_modules/
+**/.terraform/
+**/dist/

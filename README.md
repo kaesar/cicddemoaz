@@ -27,16 +27,17 @@ Full integration scenario designed for Azure:
 ```
 ./  (project root)
 ├── README.md
+├── .dockerignore               # aligera el contexto del build xdb
 ├── docker-compose.yml          # local reference: XID :8787 + XDB :9990 + WebApp :3000
 ├── .env.example
 ├── config/
 │   ├── onmind.ini.example      # XDB: auth.type=ENTRAID + kv.store (Properties, no sections)
 │   └── xid.env.example         # XID: Entra facade + CORS + OTP allowlist
 ├── docs/
-│   ├── arquitectura.md
+│   ├── arquitectura.md         # runtime + diagrama de infraestructura IaC
 │   ├── flujo-auth.md
 │   └── checklist.md
-├── app/                        # React + Vite + manual PKCE (fetch, no MSAL)
+├── app/                        # React + Vite + PKCE manual (fetch, sin MSAL)
 ├── iac/
 │   └── terraform/              # Single IaC (no Ansible)
 │       ├── main.tf
@@ -46,13 +47,16 @@ Full integration scenario designed for Azure:
 │       ├── container-apps.tf
 │       ├── acr.tf
 │       ├── keyvault.tf
-│       └── swa.tf
+│       ├── swa.tf
+│       └── files.tf            # Environment Storage xid-data (Azure Files)
 ├── pipe/
 │   ├── azure-pipelines.yml
 │   └── blueprint/
 └── scripts/
     ├── seed-xdb.sh
-    └── e2e-test.sh
+    ├── e2e-test.sh
+    ├── entrypoint-xdb.sh       # genera onmind.ini desde env (xdb ignora env)
+    └── Dockerfile.xdb          # build xdb (contexto: raíz del workspace)
 ```
 
 ## Local quickstart
@@ -161,12 +165,23 @@ az storage container create -n tfstate --account-name satfstatecicddemoaz
 
 ### 3. `cicddemoaz` variable group (Pipelines → Library)
 
-| Variable | Initial value |
-|---|---|
-| `TFSTATE_RG` / `TFSTATE_SA` | `rg-tfstate` / `satfstatecicddemoaz` |
-| `ACR_NAME` / `ACR_LOGIN_SERVER` | filled in after bootstrap (step 4) |
-| `PREFIX` / `LOCATION` | `onmind-ej` / `eastus` |
-| `XID_BASE` / `XDB_BASE` / `E2E_TOKEN` / `XID_TENANT` | filled in after the first deploy |
+One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be read back).
+
+| Variable | Secret | Initial value | Used in |
+|---|---|---|---|
+| `TFSTATE_RG` | – | `rg-tfstate` | Deploy + Destroy (remote backend) |
+| `TFSTATE_SA` | – | `satfstatecicddemoaz` | Deploy (backend + Files share account) |
+| `ACR_NAME` | – | *(after bootstrap, step 4)* | Deploy (`docker push`, `az acr login`) |
+| `ACR_LOGIN_SERVER` | – | *(after bootstrap, step 4)* | Deploy (image URLs for Terraform) |
+| `PREFIX` | – | `onmind-app` | Deploy (resource names) |
+| `LOCATION` | – | `eastus` | Deploy (region) |
+| `FILES_SHARE` | – | `xid-data` | Deploy (share + upload + Terraform) |
+| `XUSERS_CONTENT` | (secret) | test emails, one per line (e.g. `alice@example.com`) | Deploy (uploaded to the share) |
+| `XCLIENTS_CONTENT` | (secret) | *(empty = skip upload)* | Deploy (uploaded to the share) |
+| `XID_BASE` | – | *(after first deploy)* | Smoke (`e2e-test.sh`) |
+| `XDB_BASE` | – | *(after first deploy)* | Smoke (`e2e-test.sh`) |
+| `E2E_TOKEN` | (secret) | *(after first deploy, real OTP token)* | Smoke (`e2e-test.sh`) |
+| `XID_TENANT` | – | `common` | Smoke (`e2e-test.sh`) |
 
 > These variables are added from **Azure Pipelines**
 
@@ -177,6 +192,11 @@ cd iac/terraform
 cp terraform.tfvars.example terraform.tfvars
 terraform init -backend=false
 terraform validate
+# Files wiring needs the storage key (never in code): pass it via env
+export TF_VAR_files_storage_account_name=satfstatecicddemoaz
+export TF_VAR_files_storage_account_key=$(az storage account keys list -g rg-tfstate -n satfstatecicddemoaz --query '[0].value' -o tsv)
+# Create the share before apply (the Environment Storage references it)
+az storage share-rm create -g rg-tfstate --storage-account satfstatecicddemoaz --name xid-data --quota 1
 terraform plan -out=tfplan \
   -var 'xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' \
   -var 'xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -198,9 +218,10 @@ terraform apply tfplan
 4. Re-run the Deploy stage so the Container Apps pick up the secrets.
 
 > **XID users (`xusers.txt`) on Azure:** the production image expects `/data/xusers.txt`
-> (`XID_USERS_TXT`, see xid `Dockerfile`) and only ships the `.example` files. Provide it
-> via an Azure Files mount at `/data` (plus SMTP env `XID_SMTP_*` and `XID_ENV=production`,
-> otherwise OTP has no transport), or bake it at build time. Manage entries with the xid
+> (`XID_USERS_TXT`, see xid `Dockerfile`) and only ships the `.example` files. The Deploy
+> stage creates the `xid-data` share and uploads `XUSERS_CONTENT`/`XCLIENTS_CONTENT` from the
+> variable group, mounted at `/data` (plus SMTP env `XID_SMTP_*` and `XID_ENV=production`,
+> otherwise OTP has no transport). Manage entries with the xid
 > CLI (`bun run cli user add|password|list <email>`); password hashes (bcrypt) live in the
 > file itself, no Key Vault secret needed for them.
 
@@ -211,3 +232,11 @@ export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<otp
 ./scripts/e2e-test.sh
 curl -s "$XID_BASE/common/v2.0/.well-known/openid-configuration" | head -c 300; echo
 ```
+
+### 7. Destroy (manual only)
+
+The pipeline has a `destroy` parameter (default `false`): run the pipeline manually,
+check the box, and only the `Destroy` stage runs (`terraform destroy -auto-approve`
+against the remote backend). It deletes everything tracked in the tfstate (RG, ACR
+with its images, Cosmos with its data) — irreversible. The tfstate blob itself and
+the `xid-data` share contents survive unless removed by hand.

@@ -4,9 +4,9 @@ variable "subscription_id" {
 }
 
 variable "prefix" {
-  description = "Prefijo de nombres (ej. onmind-ej)"
+  description = "Prefijo de nombres (ej. onmind-app)"
   type        = string
-  default     = "onmind-ej"
+  default     = "onmind-app"
 }
 
 variable "location" {
@@ -18,7 +18,7 @@ variable "location" {
 variable "resource_group_name" {
   description = "Nombre del Resource Group"
   type        = string
-  default     = "rg-onmind-ejercicio"
+  default     = "rg-cicddemoaz"
 }
 
 variable "tags" {
@@ -46,6 +46,11 @@ variable "xid_cors_origins" {
   type        = string
   default     = "http://localhost:3000"
 }
+variable "xid_env" {
+  description = "XID_ENV en Azure: dev (OTP por logs, redirect abierto) o production (exige SMTP + allowlist)"
+  type        = string
+  default     = "dev"
+}
 
 # --- XDB ---
 variable "xdb_image" {
@@ -56,6 +61,11 @@ variable "xdb_auth_enforced" {
   description = "Si true, XDB exige provider=oidc (bloquea anon en Azure)"
   type        = bool
   default     = true
+}
+variable "xdb_oidc_client_id" {
+  description = "client_id público de la app ante XID (debe coincidir entre authorize y token)"
+  type        = string
+  default     = "my-webapp"
 }
 variable "xdb_oidc_audience" {
   type    = string
@@ -79,6 +89,24 @@ variable "cosmos_free_tier" {
   description = "Descuento free tier de por vida (1000 RU/s + 25 GB). Uno por subscription y solo al crear la cuenta. Default false para reservarlo a otro repo; con 400 RU/s provisionadas ≈ $24/mes."
   type        = bool
   default     = false
+}
+
+# --- Azure Files (xusers/xclients de xid, en la cuenta del tfstate) ---
+variable "files_storage_account_name" {
+  description = "Cuenta existente donde vive el share (normalmente la del tfstate)"
+  type        = string
+  default     = ""
+}
+variable "files_share_name" {
+  description = "File share con xusers.txt/xclients.txt (lo crea el pipeline antes del apply)"
+  type        = string
+  default     = "xid-data"
+}
+variable "files_storage_account_key" {
+  description = "Key de la cuenta (sensible; llega por TF_VAR_ desde el pipeline, nunca en código)"
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 # --- SWA ---

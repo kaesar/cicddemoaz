@@ -63,11 +63,49 @@ flowchart LR
 
 - `main.tf`: providers `azurerm`, RG, Log Analytics, CAE, identidades, roles.
 - `acr.tf`: Azure Container Registry (Basic/SKU variable).
-- `cosmos.tf`: cuenta SQL API + sql database + sql container (`/pk` o `/id`).
+- `cosmos.tf`: cuenta (SQL API: es el lenguaje de Cosmos DB, no SQL Server) + database + container (`/id`).
 - `container-apps.tf`: `xid` y `xdb` Container Apps con ingress, env/secrets desde Key Vault, probes (`/health`, `/abc`).
 - `keyvault.tf`: Key Vault + secrets (jwt-secret, cosmos-key/endpoint, rsa-jwk, xid-client-secret). Access via Managed Identity + RBAC.
 - `swa.tf`: Static Web App opcional para `app/` (desactivable con `enable_swa=false`).
 - `variables.tf` / `outputs.tf`: parametrización total (location, tenant xid, imágenes, cosmos throughput, etc.).
+- `files.tf`: Environment Storage `xid-data` (Azure Files en la cuenta del tfstate).
+
+### Diagrama de infraestructura (IaC)
+
+```mermaid
+flowchart TB
+  DEV["Azure DevOps<br/>pipe/azure-pipelines.yml"]
+  TFST["Storage Account<br/>tfstate blob + share xid-data"]
+
+  DEV -->|"terraform init/plan/apply<br/>backend remoto"| TFST
+  DEV -->|"docker push<br/>xid - xdb - app"| ACR
+  DEV -->|"upload<br/>xusers.txt + xclients.txt"| TFST
+
+  subgraph RG["rg-onmind-ejercicio"]
+    ACR["ACR<br/>imagenes xid - xdb - app"]
+    LAW["Log Analytics<br/>logs CAE"]
+    KV["Key Vault<br/>xid-rsa-jwk<br/>cosmos key + endpoint"]
+    COSMOS["Cosmos DB<br/>(SQL API: db onmind - container kv)<br/>provisioned 400 RU"]
+    SWA["Static Web App<br/>app (opcional)"]
+    MIDX["Managed Identity<br/>xid"]
+    MIDB["Managed Identity<br/>xdb"]
+    subgraph CAE["Container Apps Environment"]
+      ENVST["env storage xid-data<br/>Azure Files - montaje /data"]
+      XID["Container App xid<br/>min 0 - max 1<br/>:8787"]
+      XDB["Container App xdb<br/>min 0 - max 1<br/>:9990"]
+    end
+  end
+
+  ENVST -.->|"montaje /data<br/>xusers + xclients"| XID
+  MIDX -.->|"AcrPull"| ACR
+  MIDB -.->|"AcrPull"| ACR
+  MIDX -.->|"Secrets User<br/>xid-rsa-jwk"| KV
+  MIDB -.->|"Secrets User<br/>cosmos key + endpoint"| KV
+  XDB -->|"lectura - escritura<br/>container kv (partition /id)"| COSMOS
+  XID -->|"logs"| LAW
+  XDB -->|"logs"| LAW
+  SWA -->|"POST /abc<br/>Bearer"| XDB
+```
 
 Secrets nunca en código: Key Vault + Managed Identity o `variableGroup` del pipeline.
 
@@ -113,8 +151,9 @@ kv.mvstore.name = xybox
 # kv.cosmosdb.container = kvstore
 ```
 
-En Container Apps el fichero no se puede montar sin Azure Files: pendiente definir la entrega
-(entrypoint que genere el ini desde env — ver `container-apps.tf`).
+En Container Apps el fichero no se puede montar sin Azure Files: lo genera
+`scripts/entrypoint-xdb.sh` desde env al arrancar (imagen `scripts/Dockerfile.xdb`,
+env `XDB_*`/`COSMOS_*` en `container-apps.tf`, secretos por referencia a Key Vault).
 
 ### WebApp (`app/.env.example`)
 

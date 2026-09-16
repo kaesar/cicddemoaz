@@ -1,0 +1,16 @@
+# Imagen XDB para Azure. Contexto: raíz del workspace (contiene xdb/ y scripts/).
+# El Dockerfile de xdb no sirve en CI (COPY con ruta Windows), así que se compila
+# aquí con el wrapper versionado del repo (Gradle 9.6.1, JDK 21) y se arranca con
+# scripts/entrypoint-xdb.sh, que genera onmind.ini desde env (xdb ignora env).
+# Build (pipeline): docker build -f scripts/Dockerfile.xdb -t <acr>/xdb:<tag> .
+FROM eclipse-temurin:21-jdk-alpine AS build
+WORKDIR /src
+COPY xdb/ ./
+RUN chmod +x ./gradlew && ./gradlew shadowJar --no-daemon -x test
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /opt/onmind/run
+COPY --from=build /src/build/libs/*-full.jar ./onmind-xdb.jar
+COPY scripts/entrypoint-xdb.sh /entrypoint-xdb.sh
+EXPOSE 9990
+ENTRYPOINT ["/bin/sh", "/entrypoint-xdb.sh"]
