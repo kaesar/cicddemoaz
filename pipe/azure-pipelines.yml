@@ -30,7 +30,7 @@ resources:
       endpoint: github-sc
 
 variables:
-  - group: ejercicio-xid-xdb-vars   # XID_TENANT, ACR_NAME, PREFIX, LOCATION, etc.
+  - group: cicddemoaz   # XID_TENANT, ACR_NAME, PREFIX, LOCATION, etc.
   - name: TF_VERSION
     value: '1.9.8'
   - name: ACR_NAME
@@ -43,12 +43,17 @@ stages:
       - job: build_all
         pool: { vmImage: 'ubuntu-latest' }
         steps:
+          # path: explícito porque con multi-checkout Azure usa s/<repo> por defecto
           - checkout: self
+            path: s
           - checkout: xid
+            path: s/xid
           - checkout: xdb
+            path: s/xdb
           # Bun (runtime de XID y WebApp; sustituye a NodeTool)
           - script: |
               curl -fsSL https://bun.sh/install | bash
+              export PATH="$HOME/.bun/bin:$PATH"  # este step; prependpath aplica desde el siguiente
               echo "##vso[task.prependpath]$HOME/.bun/bin"
               bun --version
             displayName: 'Setup Bun'
@@ -60,8 +65,8 @@ stages:
             condition: and(succeeded(), ne(variables['SkipXid'], 'true'))
           # XDB (Gradle shadowJar)
           - task: JavaToolInstaller@0
-            inputs: { versionSpec: '17', jdkArchitectureOption: 'x64', jdkSourceOption: 'PreInstalled' }
-            displayName: 'JDK 17'
+            inputs: { versionSpec: '21', jdkArchitectureOption: 'x64', jdkSourceOption: 'PreInstalled' }
+            displayName: 'JDK 21'
           - task: Gradle@3
             inputs:
               workingDirectory: '$(System.DefaultWorkingDirectory)/xdb'
@@ -90,11 +95,15 @@ stages:
         pool: { vmImage: 'ubuntu-latest' }
         steps:
           - checkout: self
+            path: s
           - checkout: xid
+            path: s/xid
           - checkout: xdb
+            path: s/xdb
           # Bun (cada job corre en un agente fresco; reinstalar por job)
           - script: |
               curl -fsSL https://bun.sh/install | bash
+              export PATH="$HOME/.bun/bin:$PATH"  # este step; prependpath aplica desde el siguiente
               echo "##vso[task.prependpath]$HOME/.bun/bin"
               bun --version
             displayName: 'Setup Bun'
@@ -126,8 +135,11 @@ stages:
         pool: { vmImage: 'ubuntu-latest' }
         steps:
           - checkout: self
+            path: s
           - checkout: xid
+            path: s/xid
           - checkout: xdb
+            path: s/xdb
           - task: AzureCLI@2
             displayName: 'ACR login + docker build/push XID XDB WebApp'
             inputs:

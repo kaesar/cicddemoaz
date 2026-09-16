@@ -6,7 +6,7 @@
 flowchart LR
   User([Usuario]) -->|"abre :3000"| WebApp["WebApp Dummy<br/>React + PKCE manual<br/>Container: app / SWA"]
   WebApp -->|"1. authorize + PKCE<br/>/{tenant}/oauth2/v2.0/authorize"| XID["OnMind-XID<br/>Bun + Hono<br/>Container App: xid<br/>:8787"]
-  XID -->|"2. OTP allowlist<br/>userbase.txt"| Mail[("OTP mock / log")]
+  XID -->|"2. OTP o password<br/>xusers.txt"| Mail[("OTP mock / log")]
   XID -->|"3. code"| WebApp
   WebApp -->|"4. /token<br/>code + code_verifier"| XID
   XID -->|"5. Access + Id Token RS256<br/>JWKS"| WebApp
@@ -50,7 +50,7 @@ flowchart LR
 
 | Componente | Origen / Tec | Rol | Notas clave |
 |---|---|---|---|
-| IdP | onmind-xid (Bun+Hono) | Simula Entra ID (OIDC + subset Cognito) | Facade Entra: `/.well-known/openid-configuration`, authorize, token, userinfo, JWKS. OTP + allowlist `userbase.txt`. |
+| IdP | onmind-xid (Bun+Hono) | Simula Entra ID (OIDC + subset Cognito) | Facade Entra: `/.well-known/openid-configuration`, authorize, token, userinfo, JWKS. OTP o password (bcrypt) + allowlist `xusers.txt`. |
 | API/DB | onmind-xdb (Kotlin+http4k) | Servicio datos | Principal `/abc` (POST JSON `AbcAPI`). KV `mvstore`/`cosmosdb` (`KVStoreFactory`). Auth `auth.type=ENTRAID` (`AuthConfig` + `OIDCPlug`). |
 | WebApp | `app/` React+Vite+PKCE manual (`fetch`, sin MSAL) | Cliente | authorize → token → `POST /abc` con Bearer. |
 | Persistencia | Cosmos DB SQL API | Backend XDB | Cuenta + database + container. Emulador local para dev. |
@@ -80,7 +80,8 @@ Secrets nunca en código: Key Vault + Managed Identity o `variableGroup` del pip
 - `XID_TENANT_ID=xid` — tenant por defecto cuando la URL usa `/common`, `/organizations` o `/consumers`.
 - `XID_REDIRECT_ALLOWLIST=http://localhost:3000/*` — obligatorio solo en `production`.
 - `XID_CORS_ORIGINS=http://localhost:3000,https://<swa-host>` — CORS (imprescindible para el `POST /token` desde el navegador).
-- `XID_USERS_TXT=userbase.txt` — allowlist de emails (por defecto `./userbase.txt` del repo xid).
+- `XID_USERS_TXT=xusers.txt` — allowlist (`email` = solo OTP; `email:$2b$...` = password bcrypt
+  con OTP de respaldo; gestionar con `bun run cli user ...` en xid).
 - `XID_RSA_PRIVATE_JWK` (Key Vault `xid-rsa-jwk`) — JWK privada RS256; si se omite, claves efímeras por arranque.
 - `XID_JWT_SECRET` (KV) — HMAC solo para flujos HS256/sesión; **no** valida los RS256 de la fachada Entra.
 - `iss` y discovery **derivan del Host de la petición** (`originOf(req)` en `src/entra.js`): no existe

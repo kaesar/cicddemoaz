@@ -14,9 +14,8 @@ resource "azurerm_cosmosdb_account" "main" {
     failover_priority = 0
   }
 
-  capabilities {
-    name = "EnableServerless"
-  }
+  # Free tier (1000 RU/s + 25 GB de por vida, incompatible con serverless; uno por subscription y solo al crear).
+  free_tier_enabled = var.cosmos_free_tier
 
   tags = var.tags
 }
@@ -32,7 +31,7 @@ resource "azurerm_cosmosdb_sql_container" "kv" {
   resource_group_name   = azurerm_resource_group.main.name
   account_name          = azurerm_cosmosdb_account.main.name
   database_name         = azurerm_cosmosdb_sql_database.main.name
-  partition_key_path    = "/id"
+  partition_key_paths   = ["/id"]
   partition_key_version = 1
   throughput            = var.cosmos_throughput
 }

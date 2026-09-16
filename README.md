@@ -63,7 +63,8 @@ Full integration scenario designed for Azure:
 # 1. OnMind-XID (Entra facade IdP) - port 8787
 git clone --depth 1 https://github.com/kaesar/onmind-xid.git xid
 cd xid
-echo "alice@example.com" > userbase.txt
+echo "alice@example.com" > xusers.txt
+# Optional: real bcrypt password alongside OTP: cd xid && bun run cli user password alice@example.com
 bun install
 # Environment variables
 XID_JWT_SECRET=$(openssl rand -hex 32) XID_CORS_ORIGINS=http://localhost:3000 bun dev &
@@ -99,7 +100,7 @@ docker compose up --build
 ## Main flow
 
 1. User opens the WebApp → navigates to XID `/{tenant}/oauth2/v2.0/authorize` with PKCE (S256, WebCrypto).
-2. XID: email form → OTP (allowlist `userbase.txt`) → issues `authorization_code`.
+2. XID: email form → OTP or password (allowlist `xusers.txt`) → issues `authorization_code`.
 3. WebApp exchanges `code` at `/token` → Access + Id Token (RS256).
 4. WebApp calls `POST /abc` with `Authorization: Bearer <access_token>`.
 5. XDB validates the Bearer (`auth.type=ENTRAID`: HS256 with secret or signature-less decoded payload
@@ -131,7 +132,7 @@ Pipeline: see `pipe/azure-pipelines.yml`. Requires Service Connection `azure-rm-
 
 - `az` CLI, Terraform >= 1.6 and Contributor permissions on the subscription.
 - In Azure DevOps: `azure-rm-sc` (Azure ARM) and `github-sc` service connections
-  (GitHub, PAT with read access to the xid/xdb repos), plus the `ejercicio-xid-xdb-vars` variable group.
+  (GitHub, PAT with read access to the xid/xdb repos), plus the `cicddemoaz` variable group.
 
 ### 1. Login, subscription and providers
 
@@ -144,37 +145,46 @@ az provider register -n Microsoft.DocumentDB --wait
 az provider register -n Microsoft.KeyVault --wait
 az provider register -n Microsoft.Web --wait
 az provider register -n Microsoft.OperationalInsights --wait
+az provider register -n Microsoft.Storage --wait
 ```
+
+> `<SUBSCRIPTION_ID>` refers to the subscription ID in the Azure Portal. If you have a trial account, you have a default one and do not need this command.  
+> The commands using `az provider register -n` are run at least once for security purposes to enable the resource type in the Azure resource provider. Services: Azure Container Apps, ACR, Cosmos DB, Key Vault, Static Web Apps, Analytics, Storage (required to avoid `SubscriptionNotFound`).
 
 ### 2. Storage for tfstate (required by the pipeline)
 
 ```bash
-az group create -n rg-tfstate -l westeurope
-az storage account create -n <sttfstatexxx> -g rg-tfstate --sku Standard_LRS
-az storage container create -n tfstate --account-name <sttfstatexxx>
+az group create -n rg-tfstate -l eastus
+az storage account create -n satfstatecicddemoaz -g rg-tfstate --sku Standard_LRS
+az storage container create -n tfstate --account-name satfstatecicddemoaz
 ```
 
-### 3. `ejercicio-xid-xdb-vars` variable group (Pipelines → Library)
+### 3. `cicddemoaz` variable group (Pipelines → Library)
 
 | Variable | Initial value |
 |---|---|
-| `TFSTATE_RG` / `TFSTATE_SA` | `rg-tfstate` / `<sttfstatexxx>` |
+| `TFSTATE_RG` / `TFSTATE_SA` | `rg-tfstate` / `satfstatecicddemoaz` |
 | `ACR_NAME` / `ACR_LOGIN_SERVER` | filled in after bootstrap (step 4) |
-| `PREFIX` / `LOCATION` | `onmind-ej` / `westeurope` |
+| `PREFIX` / `LOCATION` | `onmind-ej` / `eastus` |
 | `XID_BASE` / `XDB_BASE` / `E2E_TOKEN` / `XID_TENANT` | filled in after the first deploy |
+
+> These variables are added from **Azure Pipelines**
 
 ### 4. Infra bootstrap (once, locally, with placeholder images)
 
 ```bash
 cd iac/terraform
-cp terraform.tfvars.example terraform.tfvars  # fill in subscription_id, prefix, location
+cp terraform.tfvars.example terraform.tfvars
 terraform init -backend=false
 terraform validate
-terraform apply \
+terraform plan -out=tfplan \
   -var 'xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' \
   -var 'xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-# note the outputs: acr_login_server, xid_url, xdb_url, key_vault_uri
+terraform apply tfplan
 ```
+
+> For `terraform.tfvars` fill in subscription_id, prefix, location.  
+> When finish `apply` note the outputs: `acr_login_server`, `xid_url`, `xdb_url`, `key_vault_uri`
 
 ### 5. Fill in variables and run the pipeline
 
@@ -186,6 +196,13 @@ terraform apply \
    az keyvault secret set --vault-name <kv-from-output> -n xid-rsa-jwk --file ./xid-rsa-jwk.json
    ```
 4. Re-run the Deploy stage so the Container Apps pick up the secrets.
+
+> **XID users (`xusers.txt`) on Azure:** the production image expects `/data/xusers.txt`
+> (`XID_USERS_TXT`, see xid `Dockerfile`) and only ships the `.example` files. Provide it
+> via an Azure Files mount at `/data` (plus SMTP env `XID_SMTP_*` and `XID_ENV=production`,
+> otherwise OTP has no transport), or bake it at build time. Manage entries with the xid
+> CLI (`bun run cli user add|password|list <email>`); password hashes (bcrypt) live in the
+> file itself, no Key Vault secret needed for them.
 
 ### 6. Manual smoke test
 

@@ -1,6 +1,6 @@
 subscription_id       = "00000000-0000-0000-0000-000000000000"
 prefix                = "onmind-ej"
-location              = "westeurope"
+location              = "eastus"
 resource_group_name   = "rg-onmind-ejercicio"
 xid_image             = "<acr>.azurecr.io/xid:latest"
 xdb_image             = "<acr>.azurecr.io/xdb:latest"

@@ -12,7 +12,7 @@ variable "prefix" {
 variable "location" {
   description = "Región Azure"
   type        = string
-  default     = "westeurope"
+  default     = "eastus"
 }
 
 variable "resource_group_name" {
@@ -23,7 +23,7 @@ variable "resource_group_name" {
 
 variable "tags" {
   type    = map(string)
-  default = { proyecto = "ejercicio-integracion", iac = "terraform" }
+  default = { proyecto = "cicddemoaz", iac = "terraform" }
 }
 
 # --- XID ---
@@ -74,6 +74,11 @@ variable "cosmos_container_name" {
 variable "cosmos_throughput" {
   type    = number
   default = 400
+}
+variable "cosmos_free_tier" {
+  description = "Descuento free tier de por vida (1000 RU/s + 25 GB). Uno por subscription y solo al crear la cuenta. Default false para reservarlo a otro repo; con 400 RU/s provisionadas ≈ $24/mes."
+  type        = bool
+  default     = false
 }
 
 # --- SWA ---

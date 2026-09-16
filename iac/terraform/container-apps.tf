@@ -60,7 +60,7 @@ resource "azurerm_container_app" "xid" {
         path      = "/health"
       }
     }
-    min_replicas = 1
+    min_replicas = 0 # scale-to-zero: sin tráfico no consume (ejercicio)
     max_replicas = 3
   }
 
@@ -155,7 +155,7 @@ resource "azurerm_container_app" "xdb" {
         path      = "/health"
       }
     }
-    min_replicas = 1
+    min_replicas = 0 # scale-to-zero: sin tráfico no consume (ejercicio)
     max_replicas = 3
   }
 

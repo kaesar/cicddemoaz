@@ -13,7 +13,7 @@ services:
       XID_CORS_ORIGINS: http://localhost:3000
       XID_REDIRECT_ALLOWLIST: http://localhost:3000/*
     volumes:
-      - ../xid/userbase.txt:/app/userbase.txt:ro # crear con emails de prueba (ver README)
+      - ../xid/xusers.txt:/app/xusers.txt:ro # crear con emails de prueba (ver README)
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8787/health || wget -qO- http://localhost:8787/common/v2.0/.well-known/openid-configuration']
       interval: 10s
