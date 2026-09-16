@@ -171,9 +171,7 @@ One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be rea
 |---|---|---|---|
 | `TFSTATE_RG` | – | `rg-tfstate` | Deploy + Destroy (remote backend) |
 | `TFSTATE_SA` | – | `satfstatecicddemoaz` | Deploy (backend + Files share account) |
-| `ACR_NAME` | – | *(after bootstrap, step 4)* | Deploy (`docker push`, `az acr login`) |
-| `ACR_LOGIN_SERVER` | – | *(after bootstrap, step 4)* | Deploy (image URLs for Terraform) |
-| `PREFIX` | – | `onmind-app` | Deploy (resource names) |
+| `PREFIX` | – | `onmind-ej` | Deploy (resource names; ACR name derives from it) |
 | `LOCATION` | – | `eastus` | Deploy (region) |
 | `FILES_SHARE` | – | `xid-data` | Deploy (share + upload + Terraform) |
 | `XUSERS_CONTENT` | (secret) | test emails, one per line (e.g. `alice@example.com`) | Deploy (uploaded to the share) |
@@ -185,30 +183,27 @@ One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be rea
 
 > These variables are added from **Azure Pipelines**
 
-### 4. Infra bootstrap (once, locally, with placeholder images)
+### 4. Infra bootstrap (optional: local preview only)
+
+The pipeline self-bootstraps (targeted ACR apply → push → full apply), so this step
+is only for reviewing the plan locally before the first run.
 
 ```bash
 cd iac/terraform
-cp terraform.tfvars.example terraform.tfvars
+cp terraform.tfvars.example terraform.tfvars  # fill in prefix, location (subscription optional)
 terraform init -backend=false
 terraform validate
-# Files wiring needs the storage key (never in code): pass it via env
-export TF_VAR_files_storage_account_name=satfstatecicddemoaz
-export TF_VAR_files_storage_account_key=$(az storage account keys list -g rg-tfstate -n satfstatecicddemoaz --query '[0].value' -o tsv)
-# Create the share before apply (the Environment Storage references it)
-az storage share-rm create -g rg-tfstate --storage-account satfstatecicddemoaz --name xid-data --quota 1
-terraform plan -out=tfplan \
+# Optional full preview with placeholder images (the pipeline applies for real):
+terraform plan \
   -var 'xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest' \
   -var 'xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-terraform apply tfplan
 ```
-
-> For `terraform.tfvars` fill in subscription_id, prefix, location.  
-> When finish `apply` note the outputs: `acr_login_server`, `xid_url`, `xdb_url`, `key_vault_uri`
 
 ### 5. Fill in variables and run the pipeline
 
-1. In the variable group: `ACR_NAME=<name>` and `ACR_LOGIN_SERVER=<acr_login_server output>`.
+1. In the variable group set `XUSERS_CONTENT` (e.g. `alice@example.com`) — Deploy uploads it
+   before the first apply so xid has users from day one. No ACR variables needed:
+   Deploy creates the ACR itself (targeted apply) and reads its URL from outputs.
 2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build → Test → Deploy → Smoke).
    The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR.
 3. Store the XID RSA secret in Key Vault:

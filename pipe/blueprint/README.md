@@ -4,11 +4,10 @@
 
 ````yaml
 serviceConnection: azure-rm-sc  # ARM service connection (SP con Contributor + rol tfstate)
-variableGroup: cicddemoaz       # una variable por fila:
+variableGroup: cicddemoaz       # una variable por fila (Deploy autocrea el ACR: sin ACR_*):
 #   TFSTATE_RG=rg-tfstate ................ backend remoto (Deploy + Destroy)
 #   TFSTATE_SA=satfstatecicddemoaz ....... backend + cuenta del share Files
-#   ACR_NAME / ACR_LOGIN_SERVER .......... tras bootstrap (docker push + imágenes)
-#   PREFIX=onmind-app  LOCATION=eastus ... nombres y región
+#   PREFIX=onmind-app  LOCATION=eastus ... nombres y región (el nombre ACR deriva de PREFIX)
 #   FILES_SHARE=xid-data ................. share de xusers/xclients
 #   XUSERS_CONTENT ....................... xusers.txt multilínea (mails de prueba)
 #   XCLIENTS_CONTENT ..................... xclients.txt multilínea (vacío = omite)

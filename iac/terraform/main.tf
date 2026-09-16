@@ -14,7 +14,9 @@ provider "azurerm" {
       purge_soft_delete_on_destroy = true
     }
   }
-  subscription_id = var.subscription_id
+  # Si subscription_id viene vacío se usa la subscription del contexto az CLI
+  # (local: az account show; pipeline: service connection azure-rm-sc).
+  subscription_id = var.subscription_id != "" ? var.subscription_id : null
 }
 
 resource "azurerm_resource_group" "main" {

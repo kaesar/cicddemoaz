@@ -37,7 +37,7 @@ resources:
       endpoint: github-sc
 
 variables:
-  # ACR_NAME y demás vienen del grupo cicddemoaz (README paso 3); sin redefinir aquí.
+  # El ACR se autocrea en Deploy (apply targeted); solo el backend y contenidos vienen del grupo.
   - group: cicddemoaz
   - name: TF_VERSION
     value: '1.9.8'
@@ -45,6 +45,7 @@ variables:
 stages:
   - stage: Build
     displayName: 'Build: XID + XDB + WebApp'
+    condition: eq(${{ parameters.destroy }}, false)
     jobs:
       - job: build_all
         pool: { vmImage: 'ubuntu-latest' }
@@ -95,6 +96,7 @@ stages:
 
   - stage: Test
     displayName: 'Test: unit + integración'
+    condition: eq(${{ parameters.destroy }}, false)
     dependsOn: Build
     jobs:
       - job: test_all
@@ -139,6 +141,7 @@ stages:
 
   - stage: Deploy
     displayName: 'Deploy: ACR + Terraform + Container Apps'
+    condition: eq(${{ parameters.destroy }}, false)
     dependsOn: Test
     jobs:
       - job: deploy_azure
@@ -150,22 +153,6 @@ stages:
             path: s/xid
           - checkout: xdb
             path: s/xdb
-          - task: AzureCLI@2
-            displayName: 'ACR login + docker build/push XID XDB WebApp'
-            inputs:
-              azureSubscription: 'azure-rm-sc'
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -e
-                ACR=$(az acr show -n $(ACR_NAME) --query loginServer -o tsv)
-                az acr login -n $(ACR_NAME)
-                docker build -t $ACR/xid:$(Build.BuildId) -t $ACR/xid:latest xid
-                docker push $ACR/xid:$(Build.BuildId); docker push $ACR/xid:latest
-                docker build -f scripts/Dockerfile.xdb -t $ACR/xdb:$(Build.BuildId) -t $ACR/xdb:latest .
-                docker push $ACR/xdb:$(Build.BuildId); docker push $ACR/xdb:latest
-                docker build -t $ACR/app:$(Build.BuildId) -t $ACR/app:latest app
-                docker push $ACR/app:$(Build.BuildId); docker push $ACR/app:latest
           - task: TerraformInstaller@1
             inputs: { terraformVersion: '$(TF_VERSION)' }
             displayName: 'Instalar Terraform'
@@ -205,6 +192,41 @@ stages:
               backendAzureRmStorageAccountName: '$(TFSTATE_SA)'
               backendAzureRmContainerName: tfstate
               backendAzureRmKey: ejercicio.tfstate
+          # Bootstrap: el ACR debe existir antes del push. Este apply dirigido crea
+          # solo RG + ACR (sin imágenes reales aún); en re-runs es no-op. Así el
+          # pipeline no exige bootstrap manual ni ACR_NAME en el grupo.
+          # -input=false para fallar rápido en vez de colgarse pidiendo vars;
+          # las imágenes van con placeholder (no se usan en este target).
+          - task: TerraformTaskV4@4
+            displayName: 'Terraform apply ACR (targeted)'
+            inputs:
+              provider: azurerm
+              command: custom
+              customCommand: 'apply'
+              commandOptions: '-target=azurerm_container_registry.main -auto-approve -input=false -var xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest -var xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
+              environmentServiceNameAzureRM: 'azure-rm-sc'
+          # ACR login + outputs + docker build/push (el ACR ya existe: paso anterior).
+          - task: AzureCLI@2
+            displayName: 'ACR outputs + docker build/push'
+            inputs:
+              azureSubscription: 'azure-rm-sc'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                cd iac/terraform
+                ACR_NAME=$(terraform output -raw acr_name)
+                ACR=$(terraform output -raw acr_login_server)
+                echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER]$ACR"
+                az acr login --name "$ACR_NAME"
+                cd "$SYSTEM_DEFAULTWORKINGDIRECTORY"
+                docker build -t $ACR/xid:$(Build.BuildId) -t $ACR/xid:latest xid
+                docker push $ACR/xid:$(Build.BuildId); docker push $ACR/xid:latest
+                docker build -f scripts/Dockerfile.xdb -t $ACR/xdb:$(Build.BuildId) -t $ACR/xdb:latest .
+                docker push $ACR/xdb:$(Build.BuildId); docker push $ACR/xdb:latest
+                docker build -t $ACR/app:$(Build.BuildId) -t $ACR/app:latest app
+                docker push $ACR/app:$(Build.BuildId); docker push $ACR/app:latest
           - task: TerraformTaskV4@4
             displayName: 'Terraform plan'
             inputs:
@@ -224,6 +246,7 @@ stages:
 
   - stage: Smoke
     displayName: 'Smoke E2E: login OIDC + listado'
+    condition: eq(${{ parameters.destroy }}, false)
     dependsOn: Deploy
     jobs:
       - job: smoke_e2e
@@ -268,6 +291,6 @@ stages:
               provider: azurerm
               command: custom
               customCommand: 'destroy'
-              commandOptions: '-auto-approve'
+              commandOptions: '-auto-approve -input=false -var xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest -var xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
               workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
               environmentServiceNameAzureRM: 'azure-rm-sc'

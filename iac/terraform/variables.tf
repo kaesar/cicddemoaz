@@ -1,6 +1,7 @@
 variable "subscription_id" {
-  description = "Azure subscription ID"
+  description = "Azure subscription ID (vacío = la del contexto az CLI)"
   type        = string
+  default     = ""
 }
 
 variable "prefix" {
