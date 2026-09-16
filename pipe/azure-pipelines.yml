@@ -37,11 +37,10 @@ resources:
       endpoint: github-sc
 
 variables:
-  - group: cicddemoaz   # XID_TENANT, ACR_NAME, PREFIX, LOCATION, etc.
+  # ACR_NAME y demás vienen del grupo cicddemoaz (README paso 3); sin redefinir aquí.
+  - group: cicddemoaz
   - name: TF_VERSION
     value: '1.9.8'
-  - name: ACR_NAME
-    value: $[variables.ACR_NAME]    # o setear literal si no hay variable group
 
 stages:
   - stage: Build
