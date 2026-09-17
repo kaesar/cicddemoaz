@@ -192,11 +192,8 @@ stages:
               backendAzureRmStorageAccountName: '$(TFSTATE_SA)'
               backendAzureRmContainerName: tfstate
               backendAzureRmKey: ejercicio.tfstate
-          # Bootstrap: el ACR debe existir antes del push. Este apply dirigido crea
-          # solo RG + ACR (sin imágenes reales aún); en re-runs es no-op. Así el
-          # pipeline no exige bootstrap manual ni ACR_NAME en el grupo.
-          # -input=false para fallar rápido en vez de colgarse pidiendo vars;
-          # las imágenes van con placeholder (no se usan en este target).
+          # Bootstrap: el ACR debe existir antes del push. Este apply crea solo RG + ACR (sin imágenes).
+          # Así el pipeline no exige bootstrap manual ni ACR_NAME en el grupo. -input=false para evitar input (espera).
           - task: TerraformTaskV4@4
             displayName: 'Terraform apply ACR (targeted)'
             inputs:
@@ -235,6 +232,9 @@ stages:
               workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
               commandOptions: '-out=tfplan -var xid_image=$(ACR_LOGIN_SERVER)/xid:$(Build.BuildId) -var xdb_image=$(ACR_LOGIN_SERVER)/xdb:$(Build.BuildId) -var files_storage_account_name=$(TFSTATE_SA) -var files_share_name=$(FILES_SHARE)'
               environmentServiceNameAzureRM: 'azure-rm-sc'
+            env:
+              # Las secretas no llegan solas al entorno: mapeo explícito.
+              TF_VAR_files_storage_account_key: $(TF_VAR_files_storage_account_key)
           - task: TerraformTaskV4@4
             displayName: 'Terraform apply'
             inputs:
@@ -243,6 +243,8 @@ stages:
               workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
               commandOptions: 'tfplan'
               environmentServiceNameAzureRM: 'azure-rm-sc'
+            env:
+              TF_VAR_files_storage_account_key: $(TF_VAR_files_storage_account_key)
 
   - stage: Smoke
     displayName: 'Smoke E2E: login OIDC + listado'
@@ -274,6 +276,17 @@ stages:
           - task: TerraformInstaller@1
             inputs: { terraformVersion: '$(TF_VERSION)' }
             displayName: 'Instalar Terraform'
+          # La key no cruza jobs: se relee aquí (setvariable solo vive en su job).
+          - task: AzureCLI@2
+            displayName: 'Leer key del storage (TF_VAR)'
+            inputs:
+              azureSubscription: 'azure-rm-sc'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                KEY=$(az storage account keys list -g "$(TFSTATE_RG)" -n "$(TFSTATE_SA)" --query '[0].value' -o tsv)
+                echo "##vso[task.setvariable variable=TF_VAR_files_storage_account_key;issecret=true]$KEY"
           - task: TerraformTaskV4@4
             displayName: 'Terraform init (backend remoto)'
             inputs:
@@ -294,3 +307,5 @@ stages:
               commandOptions: '-auto-approve -input=false -var xid_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest -var xdb_image=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
               workingDirectory: '$(System.DefaultWorkingDirectory)/iac/terraform'
               environmentServiceNameAzureRM: 'azure-rm-sc'
+            env:
+              TF_VAR_files_storage_account_key: $(TF_VAR_files_storage_account_key)

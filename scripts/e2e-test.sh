@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Smoke E2E: discovery XID + JWKS + /abc con Bearer + CORS. Uso: XID_BASE=.. XDB_BASE=.. E2E_TOKEN=.. ./e2e-test.sh
+# Smoke E2E: discovery XID + JWKS + /abc con Bearer + rechazo anónimo.
+# Uso: XID_BASE=.. XDB_BASE=.. E2E_TOKEN=.. ./e2e-test.sh
+# Sin E2E_TOKEN corre en modo parcial (sin userinfo ni /abc autorizado)
 set -euo pipefail
 XID_BASE="${XID_BASE:-http://localhost:8787}"
 XDB_BASE="${XDB_BASE:-http://localhost:9990}"
@@ -19,14 +21,18 @@ JWKS_URL="$(echo "$DISC" | python3 -c 'import json,sys; print(json.load(sys.stdi
 curl -sf "$JWKS_URL" | grep -q '"keys"' || fail "jwks sin keys"
 pass "jwks"
 
-[ -n "$TOKEN" ] || fail "E2E_TOKEN vacío: haz login OTP en WebApp y exporta el access_token"
-curl -sf "$XID_BASE/openid/userinfo" -H "Authorization: Bearer $TOKEN" | grep -q sub || fail "userinfo"
-pass "userinfo"
+if [ -z "$TOKEN" ]; then
+  echo "SMOKE PARCIAL (sin E2E_TOKEN): discovery + JWKS OK; userinfo y /abc autorizado omitidos"
+  echo "Para el E2E completo: login OTP contra $XID_BASE y exporta E2E_TOKEN=<access_token>"
+else
+  curl -sf "$XID_BASE/openid/userinfo" -H "Authorization: Bearer $TOKEN" | grep -q sub || fail "userinfo"
+  pass "userinfo"
 
-RESP="$(curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}')" || fail "/abc con token"
-pass "/abc autorizado: $(echo "$RESP" | head -c 120)"
+  RESP="$(curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $TOKEN" \
+    -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}')" || fail "/abc con token"
+  pass "/abc autorizado: $(echo "$RESP" | head -c 120)"
+fi
 
 if curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
   -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"1"}' >/dev/null 2>&1; then
@@ -35,4 +41,4 @@ else
   pass "/abc rechaza anónimo (401)"
 fi
 
-echo "E2E OK"
+if [ -n "$TOKEN" ]; then echo "E2E OK"; else echo "SMOKE PARCIAL OK"; fi

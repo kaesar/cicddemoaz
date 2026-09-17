@@ -155,6 +155,20 @@ az provider register -n Microsoft.Storage --wait
 > `<SUBSCRIPTION_ID>` refers to the subscription ID in the Azure Portal. If you have a trial account, you have a default one and do not need this command.  
 > The commands using `az provider register -n` are run at least once for security purposes to enable the resource type in the Azure resource provider. Services: Azure Container Apps, ACR, Cosmos DB, Key Vault, Static Web Apps, Analytics, Storage (required to avoid `SubscriptionNotFound`).
 
+Terraform creates `role_assignment` resources, which needs the pipeline identity to be **Owner or User Access Administrator** (Contributor is not enough → 403 `roleAssignments/write`). Grant it once (you must run this as Owner):
+
+```bash
+SP_OBJECT_ID=$(az ad sp list --display-name azure-rm-sc --query '[0].id' -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "User Access Administrator" \
+  --scope /subscriptions/<SUBSCRIPTION_ID>
+```
+
+> If `SP_OBJECT_ID` is empty, copy the object id from any AuthorizationFailed error in the pipeline log.
+
 ### 2. Storage for tfstate (required by the pipeline)
 
 ```bash
@@ -171,8 +185,8 @@ One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be rea
 |---|---|---|---|
 | `TFSTATE_RG` | – | `rg-tfstate` | Deploy + Destroy (remote backend) |
 | `TFSTATE_SA` | – | `satfstatecicddemoaz` | Deploy (backend + Files share account) |
-| `PREFIX` | – | `onmind-ej` | Deploy (resource names; ACR name derives from it) |
-| `LOCATION` | – | `eastus` | Deploy (region) |
+| `PREFIX` | – | `onmind-app` | Deploy (resource names; ACR name derives from it) |
+| `LOCATION` | – | `eastus` | Deploy (region, Cosmos/SWA default to `eastus2`) |
 | `FILES_SHARE` | – | `xid-data` | Deploy (share + upload + Terraform) |
 | `XUSERS_CONTENT` | (secret) | test emails, one per line (e.g. `alice@example.com`) | Deploy (uploaded to the share) |
 | `XCLIENTS_CONTENT` | (secret) | *(empty = skip upload)* | Deploy (uploaded to the share) |
@@ -221,6 +235,24 @@ terraform plan \
 > file itself, no Key Vault secret needed for them.
 
 ### 6. Manual smoke test
+
+Fill the group once (FQDNs are stable across revisions):
+
+```bash
+XID_FQDN=$(az containerapp show -n onmind-app-xid -g rg-cicddemoaz --query properties.configuration.ingress.fqdn -o tsv)
+XDB_FQDN=$(az containerapp show -n onmind-app-xdb -g rg-cicddemoaz --query properties.configuration.ingress.fqdn -o tsv)
+echo "XID_BASE=https://$XID_FQDN XDB_BASE=https://$XDB_FQDN"
+```
+
+Without `E2E_TOKEN` the smoke runs partial (discovery + JWKS + anonymous rejection).
+For the full E2E, get a real OTP token by pointing the local app at Azure:
+
+```bash
+cd app
+VITE_XID_AUTHORITY="https://$XID_FQDN/common" VITE_XDB_API_URL="https://$XDB_FQDN" bun dev
+```
+
+> copy `access_token` from `sessionStorage` (`xid.session`) to assign `E2E_TOKEN`
 
 ```bash
 export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<otp-access_token>"

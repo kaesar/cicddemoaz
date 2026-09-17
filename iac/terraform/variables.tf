@@ -91,6 +91,11 @@ variable "cosmos_free_tier" {
   type        = bool
   default     = false
 }
+variable "cosmos_location" {
+  description = "Región de Cosmos DB (eastus rechazó capacidad en trial; eastus2 verificado para SWA)"
+  type        = string
+  default     = "eastus2"
+}
 
 # --- Azure Files (xusers/xclients de xid, en la cuenta del tfstate) ---
 variable "files_storage_account_name" {
@@ -114,6 +119,11 @@ variable "files_storage_account_key" {
 variable "enable_swa" {
   type    = bool
   default = true
+}
+variable "swa_location" {
+  description = "Región de Static Web Apps (eastus no lo soporta; eastus2 sí)"
+  type        = string
+  default     = "eastus2"
 }
 variable "swa_repository_url" {
   description = "Repo GitHub de la webapp para SWA (opcional si deploy por pipeline)"

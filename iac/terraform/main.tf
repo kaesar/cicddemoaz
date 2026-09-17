@@ -6,6 +6,8 @@ terraform {
       version = "~> 3.110"
     }
   }
+  # Backend remoto (azurerm) con config parcial: el pipeline lo rellena
+  backend "azurerm" {}
 }
 
 provider "azurerm" {
