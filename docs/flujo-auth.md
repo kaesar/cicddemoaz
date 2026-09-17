@@ -90,6 +90,7 @@ Token Id vs Access: WebApp envía **access_token** a XDB. `id_token` solo para U
 | `invalid_client` en /token | `client_id` vacío o distinto al de authorize | Reutilizar el mismo `client_id` en ambas llamadas |
 | `code_verifier` fail | PKCE S256 mal generado | Generar con WebCrypto (SHA-256 + base64url sin padding), como `app/src/auth/pkce.ts` |
 | `401 invalid_token` en XDB | `auth.jwt.secret` con tokens RS256, o `iss` distinto | Sin secreto en dev (decode-only); `iss` = origen real de XID |
+| JWKS 500 `XID_RSA_PRIVATE_JWK inválido` | Secreto KV aún con placeholder (`REPLACE-via-pipeline`) | Generar JWK RS256 real, `az keyvault secret set` y nueva revisión de xid |
 | CORS missing + `401` en `/abc` | El 401 sale sin cabeceras (auth está fuera de Cors en xdb) o el preflight OPTIONS es rechazado | Parche aplicado en `xdb/onmindxdb.kt` (Cors fuera de auth + `Authorization` en allow-headers); reiniciar xdb |
 | XDB ignora tu ini | `Rote` carga `../onmind.ini` → `~/onmind/onmind.ini` → `/app/onmind.ini` → `./onmind.ini` | Mira la línea `<fichero> --> Checked OK!` al arrancar; `dai.cors` no se lee (CORS va fijo en código) |
 | CORS bloqueado | `XID_CORS_ORIGINS` sin origen webapp | Añadir `http://localhost:3000` y host SWA |

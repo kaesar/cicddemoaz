@@ -220,10 +220,23 @@ terraform plan \
    Deploy creates the ACR itself (targeted apply) and reads its URL from outputs.
 2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build → Test → Deploy → Smoke).
    The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR.
-3. Store the XID RSA secret in Key Vault:
-   ```bash
-   az keyvault secret set --vault-name <kv-from-output> -n xid-rsa-jwk --file ./xid-rsa-jwk.json
-   ```
+3. Generate and store the XID RSA key (one-time; the Terraform placeholder breaks
+   JWKS and token signing until replaced):
+
+```bash
+./scripts/rotate-xid-keys.sh [VAULT] [RG] [APP]  # defaults: onmind-app-kv rg-cicddemoaz onmind-app-xid
+```
+
+> If `setSecret` returns `ForbiddenByRbac`, your user lacks the role (only the
+> pipeline SP has it). Grant it once as Owner, wait ~1 min, retry:
+
+```bash
+MY_OID=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create --assignee-object-id "$MY_OID" \
+  --role "Key Vault Secrets Officer" \
+  --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-cicddemoaz/providers/Microsoft.KeyVault/vaults/onmind-app-kv
+```
+
 4. Re-run the Deploy stage so the Container Apps pick up the secrets.
 
 > **XID users (`xusers.txt`) on Azure:** the production image expects `/data/xusers.txt`

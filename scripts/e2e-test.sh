@@ -8,6 +8,10 @@ XDB_BASE="${XDB_BASE:-http://localhost:9990}"
 TENANT="${XID_TENANT:-common}"
 TOKEN="${E2E_TOKEN:-}"
 
+# Normaliza esquema (el grupo suele guardar solo el FQDN).
+case "$XID_BASE" in http://*|https://*) ;; *) XID_BASE="https://$XID_BASE";; esac
+case "$XDB_BASE" in http://*|https://*) ;; *) XDB_BASE="https://$XDB_BASE";; esac
+
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -18,7 +22,8 @@ echo "$DISC" | grep -q token_endpoint || fail "discovery sin token_endpoint"
 pass "discovery OIDC"
 
 JWKS_URL="$(echo "$DISC" | python3 -c 'import json,sys; print(json.load(sys.stdin)["jwks_uri"])')"
-curl -sf "$JWKS_URL" | grep -q '"keys"' || fail "jwks sin keys"
+# -L: XID tras el ingress emite URLs http (deriva del Host interno) y el ingress responde 301 hacia https.
+curl -sfL "$JWKS_URL" | grep -q '"keys"' || fail "jwks sin keys (¿XID_RSA_PRIVATE_JWK placeholder en Key Vault?)"
 pass "jwks"
 
 if [ -z "$TOKEN" ]; then
