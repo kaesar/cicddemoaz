@@ -1,3 +1,11 @@
+# El host del SWA lo asigna Azure: se compone aquí para no manipularlo
+locals {
+  xid_cors_origins = join(",", compact([
+    var.xid_cors_origins,
+    var.enable_swa ? "https://${azurerm_static_web_app.webapp[0].default_host_name}" : ""
+  ]))
+}
+
 resource "azurerm_container_app" "xid" {
   name                         = "${var.prefix}-xid"
   container_app_environment_id = azurerm_container_app_environment.main.id
@@ -51,7 +59,7 @@ resource "azurerm_container_app" "xid" {
       }
       env {
         name  = "XID_CORS_ORIGINS"
-        value = var.xid_cors_origins
+        value = local.xid_cors_origins
       }
       env {
         name  = "XID_USERS_TXT"

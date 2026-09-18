@@ -1,5 +1,17 @@
 # XDB solo lee este fichero como Properties (Rote: ./onmind.ini, ../onmind.ini o /app/onmind.ini).
 # NO lee variables de entorno. Copiar a config/onmind.ini (gitignored) u onmind.ini según arranque.
+# Base que Rote exige (sin app.local el arranque muere con NullPointerException).
+app.mode = production
+app.local = ./
+app.base = /app
+app.language = en
+app.logger = -
+app.modality = 5
+app.deploy = 0
+app.ui = +
+dai.port = 9990
+dai.cors = *
+db.query_limit = 1200
 # Puertos/servidor
 dai.port = 9990
 dai.host = http://localhost

@@ -174,3 +174,16 @@ env `XDB_*`/`COSMOS_*` en `container-apps.tf`, secretos por referencia a Key Vau
 3. Cosmos SQL API con partición `/id` (simple para KV genérico).
 4. Terraform único IaC; sin Ansible.
 5. PKCE manual en la SPA (`fetch`, S256 vía WebCrypto, sin MSAL); `sessionStorage` para tokens.
+
+## Seguridad (postura actual: solo datos de prueba)
+
+- **CORS `AllowAll` en XDB**: default upstream (base local open-source); se mantiene por conveniencia
+  en este ejercicio. No es control de acceso: `curl` ignora CORS.
+- **Controles reales hoy**: Bearer obligatorio en todo salvo `/health`; secretos en Key Vault;
+  ACR privado; identidades gestionadas (AcrPull, Secrets User).
+- **Brechas conocidas**: sin `auth.jwt.secret`, XDB acepta payload decodificado **sin verificar
+  firma** (un JWT autofirmado entra); ingress público sin restricción IP, VNet, WAF ni rate-limit.
+- **Endurecimiento en orden** (fuera del alcance de este ejercicio):
+  1) validación JWT real (si se admite/configura JWKS en **XDB**)
+  2) restricción de red (ejemplo: Front Door + WAF delante, `ipSecurityRestrictions` en Container Apps)
+  3) orígenes CORS específicos (si se admite/configura en **XDB**).

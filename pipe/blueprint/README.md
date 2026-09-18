@@ -22,7 +22,7 @@ repos:
 stages:
   Build: [xid bun build, xdb shadowJar, app bun build → artifacts]
   Test: [bun test, gradle test, vitest run, integración OTP mock]
-  Deploy: [Files share+upload, docker push ACR ×3, terraform init/plan/apply]
-  Smoke: [scripts/e2e-test.sh con XID_BASE/XDB_BASE/E2E_TOKEN]
+  Deploy: [Files share+upload, docker push ACR ×3, terraform init/plan/apply, frontend a SWA]
+  Smoke: [seed-xdb.sh opcional con parameters.seed=true, scripts/e2e-test.sh con XID_BASE/XDB_BASE/E2E_TOKEN]
   Destroy: [solo manual con parameters.destroy=true → terraform destroy -auto-approve]
 ```

@@ -20,6 +20,10 @@ parameters:
     displayName: 'Destruir infra (terraform destroy, solo manual)'
     type: boolean
     default: false
+  - name: seed
+    displayName: 'Cargar datos de ejemplo (seed-xdb.sh, requiere E2E_TOKEN vigente)'
+    type: boolean
+    default: false
 
 # Repos externos: se clonan junto al self checkout (s/xid, s/xdb).
 # Requiere service connection GitHub `github-sc` (PAT con read a ambos repos).
@@ -171,16 +175,20 @@ stages:
                 echo "##vso[task.setvariable variable=TF_VAR_files_storage_account_key;issecret=true]$KEY"
                 az storage share-rm show -g "$RG" --storage-account "$SA" --name "$SHARE" >/dev/null 2>&1 \
                   || az storage share-rm create -g "$RG" --storage-account "$SA" --name "$SHARE" --quota 1 >/dev/null
-                if [ -n "$(XUSERS_CONTENT)" ]; then
-                  printf '%s' "$(XUSERS_CONTENT)" > /tmp/xusers.txt
+                if [ -n "$XUSERS_CONTENT" ]; then
+                  printf '%s' "$XUSERS_CONTENT" > /tmp/xusers.txt
                   az storage file upload --account-name "$SA" --account-key "$KEY" \
                     --share-name "$SHARE" --path xusers.txt --source /tmp/xusers.txt
                 fi
-                if [ -n "$(XCLIENTS_CONTENT)" ]; then
-                  printf '%s' "$(XCLIENTS_CONTENT)" > /tmp/xclients.txt
+                if [ -n "$XCLIENTS_CONTENT" ]; then
+                  printf '%s' "$XCLIENTS_CONTENT" > /tmp/xclients.txt
                   az storage file upload --account-name "$SA" --account-key "$KEY" \
                     --share-name "$SHARE" --path xclients.txt --source /tmp/xclients.txt
                 fi
+            # Contenidos por entorno (no por macro en script): así `$`, backticks y `\` no se re-expanden en bash.
+            env:
+              XUSERS_CONTENT: $(XUSERS_CONTENT)
+              XCLIENTS_CONTENT: $(XCLIENTS_CONTENT)
           - task: TerraformTaskV4@4
             displayName: 'Terraform init'
             inputs:
@@ -245,6 +253,39 @@ stages:
               environmentServiceNameAzureRM: 'azure-rm-sc'
             env:
               TF_VAR_files_storage_account_key: $(TF_VAR_files_storage_account_key)
+          # Bun también aquí: el frontend se construye para prod en Deploy (las URLs
+          # de Azure solo se conocen tras el apply; Vite las fija en build).
+          - script: |
+              curl -fsSL https://bun.sh/install | bash
+              export PATH="$HOME/.bun/bin:$PATH"
+              echo "##vso[task.prependpath]$HOME/.bun/bin"
+              bun --version
+            displayName: 'Setup Bun'
+          # Frontend a SWA: dist construido contra XID/XDB de Azure + deploy con SWA CLI.
+          # --app-name es obligatorio: sin él la CLI pregunta interactivamente y se cuelga.
+          - task: AzureCLI@2
+            displayName: 'Deploy frontend a SWA'
+            timeoutInMinutes: 15
+            inputs:
+              azureSubscription: 'azure-rm-sc'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                cd iac/terraform
+                SWA_NAME=$(terraform output -raw swa_name)
+                SWA_RG=$(terraform output -raw swa_rg)
+                XID_FQDN=$(terraform output -raw xid_url)
+                XDB_FQDN=$(terraform output -raw xdb_url)
+                SWA_HOST=$(terraform output -raw swa_hostname)
+                TOKEN=$(az staticwebapp secrets list -n "$SWA_NAME" -g "$SWA_RG" --query property.apiKey -o tsv)
+                echo "Frontend público en: https://$SWA_HOST"
+                cd "$SYSTEM_DEFAULTWORKINGDIRECTORY/app"
+                bun install --frozen-lockfile
+                VITE_XID_AUTHORITY="https://$XID_FQDN/common" \
+                VITE_XDB_API_URL="https://$XDB_FQDN" \
+                bun run build
+                npx --yes @azure/static-web-apps-cli deploy ./dist --app-name "$SWA_NAME" --deployment-token "$TOKEN" --env production
 
   - stage: Smoke
     displayName: 'Smoke E2E: login OIDC + listado'
@@ -255,9 +296,18 @@ stages:
         pool: { vmImage: 'ubuntu-latest' }
         steps:
           - script: |
+              chmod +x scripts/*.sh
+              ./scripts/seed-xdb.sh
+            displayName: 'Seed datos de ejemplo'
+            condition: eq(${{ parameters.seed }}, true)
+            env:
+              XDB_BASE: $(XDB_BASE)
+              E2E_TOKEN: $(E2E_TOKEN)
+          - script: |
               chmod +x scripts/e2e-test.sh
               scripts/e2e-test.sh
             displayName: 'Smoke: discovery + /abc con Bearer'
+            continueOnError: true  # No bloqueante ante token caducado o fallo
             env:
               XID_BASE: $(XID_BASE)
               XDB_BASE: $(XDB_BASE)

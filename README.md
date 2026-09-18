@@ -1,4 +1,4 @@
-# Integration Exercise: WebApp + XID (Entra facade) + XDB (Cosmos DB) on Azure
+# CICD: WebApp + XID (Entra-ID like) + XDB / Azure
 
 Full integration scenario designed for Azure:
 
@@ -219,7 +219,9 @@ terraform plan \
    before the first apply so xid has users from day one. No ACR variables needed:
    Deploy creates the ACR itself (targeted apply) and reads its URL from outputs.
 2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build → Test → Deploy → Smoke).
-   The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR.
+   The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR,
+   then builds the frontend against the Azure XID/XDB URLs and deploys `app/dist` to the
+   Static Web App (`swa_hostname` output = public frontend URL).
 3. Generate and store the XID RSA key (one-time; the Terraform placeholder breaks
    JWKS and token signing until replaced):
 
@@ -265,13 +267,19 @@ cd app
 VITE_XID_AUTHORITY="https://$XID_FQDN/common" VITE_XDB_API_URL="https://$XDB_FQDN" bun dev
 ```
 
-> copy `access_token` from `sessionStorage` (`xid.session`) to assign `E2E_TOKEN`
+> copy `accessToken` from `sessionStorage` (`xid.session`) to assign `E2E_TOKEN`
 
 ```bash
 export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<otp-access_token>"
 ./scripts/e2e-test.sh
 curl -s "$XID_BASE/common/v2.0/.well-known/openid-configuration" | head -c 300; echo
 ```
+
+Pipeline parameters (manual runs): `destroy` (default `false`, only Destroy runs) and
+`seed` (default `false`, runs `scripts/seed-xdb.sh` with `E2E_TOKEN` before the smoke).
+
+The smoke step is non-blocking (`continueOnError`): a stale token leaves it orange,
+never red — the explicit `seed` step does fail loudly.
 
 ### 7. Destroy (manual only)
 
