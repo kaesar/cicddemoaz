@@ -70,12 +70,12 @@ curl $XDB/files -H "Authorization: Bearer <ACCESS_TOKEN>"
 
 ## Validación en XDB
 
-XDB (`auth.type=ENTRAID` → `OIDCPlug`, sin llamadas de red):
+XDB (`auth.type=ENTRAID` → `OIDCPlug`, con `JwksValidator` desde v0.15):
 
+- Con `auth.oidc.jwks_url`: verifica firma RS256 + `exp` + `iss`/`aud` si se configuran.
 - Con `auth.jwt.secret` (HS256): verifica firma + `exp` + `iss == auth.jwt.issuer`.
-- Sin secreto: acepta el payload decodificado **sin verificar firma** (solo dev).
-- XDB **no valida RS256 ni consulta JWKS** en esta versión: no pongas `auth.jwt.secret`
-  si los tokens vienen de la fachada Entra de XID (son RS256 → 401).
+- Sin jwks ni secreto: acepta el payload decodificado **sin verificar firma** (solo dev;
+  es nuestra config actual). No pongas `auth.jwt.secret` con tokens RS256 (daría 401).
 - `client_id` del flujo público no requiere registro: basta no vacío y que coincida
   entre authorize y token (`redirect_uri mismatch` / `client_id mismatch` si difieren).
 - `redirect_uri` en dev (`XID_ENV=dev` + allowlist vacía) admite cualquier http/https;
@@ -92,6 +92,6 @@ Token Id vs Access: WebApp envía **access_token** a XDB. `id_token` solo para U
 | `401 invalid_token` en XDB | `auth.jwt.secret` con tokens RS256, o `iss` distinto | Sin secreto en dev (decode-only); `iss` = origen real de XID |
 | JWKS 500 `XID_RSA_PRIVATE_JWK inválido` | Secreto KV aún con placeholder (`REPLACE-via-pipeline`) | Generar JWK RS256 real, `az keyvault secret set` y nueva revisión de xid |
 | CORS missing + `401` en `/abc` | El 401 sale sin cabeceras (auth está fuera de Cors en xdb) o el preflight OPTIONS es rechazado | Parche aplicado en `xdb/onmindxdb.kt` (Cors fuera de auth + `Authorization` en allow-headers); reiniciar xdb |
-| XDB ignora tu ini | `Rote` carga `../onmind.ini` → `~/onmind/onmind.ini` → `/app/onmind.ini` → `./onmind.ini` | Mira la línea `<fichero> --> Checked OK!` al arrancar; `dai.cors` no se lee (CORS va fijo en código) |
+| XDB ignora tu ini | `Rote` carga `ONMIND_INI` (si existe) → `../onmind.ini` → `~/onmind/` → `/app` → `./` | Mira la línea `<fichero> --> Checked OK!` al arrancar; `dai.cors` viejo equivale a `app.cors` |
 | CORS bloqueado | `XID_CORS_ORIGINS` sin origen webapp | Añadir `http://localhost:3000` y host SWA |
 | OTP nunca llega | Buscarlo en el email | En dev sale por consola `[xid:mail:console]` (o Mailpit en 127.0.0.1:1025) |

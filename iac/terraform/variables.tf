@@ -43,7 +43,7 @@ variable "xid_client_id" {
   default     = "my-webapp"
 }
 variable "xid_cors_origins" {
-  description = "Orígenes CORS permitidos"
+  description = "Orígenes CORS extra (el host SWA se añade solo en container-apps.tf)"
   type        = string
   default     = "http://localhost:3000"
 }
@@ -67,6 +67,11 @@ variable "xdb_oidc_client_id" {
   description = "client_id público de la app ante XID (debe coincidir entre authorize y token)"
   type        = string
   default     = "my-webapp"
+}
+variable "xdb_cors_origins" {
+  description = "Orígenes extra para app.cors (el host SWA se añade solo)"
+  type        = string
+  default     = "http://localhost:3000"
 }
 variable "xdb_oidc_audience" {
   type    = string

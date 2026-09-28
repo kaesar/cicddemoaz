@@ -30,3 +30,11 @@ output "key_vault_uri" {
 output "swa_hostname" {
   value = var.enable_swa ? azurerm_static_web_app.webapp[0].default_host_name : ""
 }
+
+output "swa_name" {
+  value = var.enable_swa ? azurerm_static_web_app.webapp[0].name : ""
+}
+
+output "swa_rg" {
+  value = var.resource_group_name
+}

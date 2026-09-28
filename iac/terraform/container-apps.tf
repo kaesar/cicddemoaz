@@ -1,3 +1,16 @@
+# El host del SWA lo asigna Azure: se compone aquí para no manipularlo
+locals {
+  xid_cors_origins = join(",", compact([
+    var.xid_cors_origins,
+    var.enable_swa ? "https://${azurerm_static_web_app.webapp[0].default_host_name}" : ""
+  ]))
+  # XDB sirve a los mismos navegadores (SWA + local).
+  xdb_cors_origins = join(",", compact([
+    var.xdb_cors_origins,
+    var.enable_swa ? "https://${azurerm_static_web_app.webapp[0].default_host_name}" : ""
+  ]))
+}
+
 resource "azurerm_container_app" "xid" {
   name                         = "${var.prefix}-xid"
   container_app_environment_id = azurerm_container_app_environment.main.id
@@ -51,7 +64,7 @@ resource "azurerm_container_app" "xid" {
       }
       env {
         name  = "XID_CORS_ORIGINS"
-        value = var.xid_cors_origins
+        value = local.xid_cors_origins
       }
       env {
         name  = "XID_USERS_TXT"
@@ -132,12 +145,8 @@ resource "azurerm_container_app" "xdb" {
       cpu    = 0.5
       memory = "1Gi"
 
-      # xdb solo lee onmind.ini: scripts/entrypoint-xdb.sh lo genera desde estas
-      # env al arrancar. COSMOS_ENDPOINT/KEY llegan por referencia a Key Vault.
-      env {
-        name  = "XDB_AUTH_TYPE"
-        value = "ENTRAID"
-      }
+      # Config fija en scripts/onmind.ini (bakeado); aquí solo env con valores.
+      # COSMOS_ENDPOINT/KEY llegan por referencia a Key Vault.
       env {
         name  = "XDB_OIDC_URL"
         value = "https://${azurerm_container_app.xid.ingress[0].fqdn}"
@@ -145,6 +154,10 @@ resource "azurerm_container_app" "xdb" {
       env {
         name  = "XDB_OIDC_CLIENT_ID"
         value = var.xdb_oidc_client_id
+      }
+      env {
+        name  = "XDB_CORS_ORIGINS"
+        value = local.xdb_cors_origins
       }
       env {
         name  = "XDB_KV_STORE"

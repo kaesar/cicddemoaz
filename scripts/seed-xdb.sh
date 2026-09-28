@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Carga datos de ejemplo en XDB (/abc insert). Uso: ./seed-xdb.sh [TOKEN]
 # Sin TOKEN llama sin Authorization (vale si XDB está en modo decode-only/dev).
 # Idempotente: omite filas ya existentes (XDB responde "Already exists").
@@ -23,11 +24,40 @@ curl_api() {
 }
 
 find_total() {
+  # Sin -f: el 404 de hoja vacía es legítimo (total 0 → sembrar); solo falla
+  # transporte o cuerpo no-JSON (p. ej. 401 sin token).
   local resp
-  resp=$(curl_api -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
-    -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"1"}') \
-    || { echo "FAIL find en $XDB_BASE/abc (¿XDB caído o 401? Pasa un token: ./seed-xdb.sh <TOKEN>)" >&2; return 1; }
-  printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("total") or 0)'
+  if [ -n "$TOKEN" ]; then
+    resp=$(curl -s -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $TOKEN" \
+      -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"1"}') \
+      || { echo "FAIL conexión con $XDB_BASE/abc" >&2; return 1; }
+  else
+    resp=$(curl -s -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+      -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"1"}') \
+      || { echo "FAIL conexión con $XDB_BASE/abc" >&2; return 1; }
+  fi
+  printf '%s' "$resp" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit("FAIL respuesta no JSON: XDB exige Bearer (¿E2E_TOKEN vacío o caducado en el grupo? Ver README paso 6)")
+print(d.get("total") or 0)'
+}
+
+# En xyany, find/insert exigen la hoja definida (fila en xykit). En un store
+# fresco no existe: se crea con what=create (define revienta en store vacío).
+create_sheet() {
+  local resp
+  if resp=$(curl_api -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
+    -d '{"what":"create","from":"xyany","some":"PRODUCTS","show":"Productos","user":"seed"}'); then
+    echo "hoja PRODUCTS.SHEET creada"
+  elif printf '%s' "$resp" | grep -q 'Already exists'; then  # Idempotencia
+    echo "hoja PRODUCTS.SHEET ya existe, omito"
+  else
+    echo "FAIL create PRODUCTS.SHEET: $resp" >&2
+    return 1
+  fi
 }
 
 # Insert real de XDB: what=insert + puts como STRING json (columnas any01, any02, ...).
@@ -49,6 +79,7 @@ total=$(find_total) || exit 1
 if [ "$total" -gt 0 ] && [ "$FORCE" != "1" ]; then
   echo "PRODUCTS.SHEET ya tiene datos, omito inserts (FORCE=1 para forzar)."
 else
+  create_sheet || exit 1
   seed_one "Portátil 14" "899" "12"
   seed_one "Teclado ES" "49" "100"
   seed_one "Monitor 27" "229" "30"

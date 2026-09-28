@@ -18,6 +18,8 @@
 **/*.env.local
 **/onmind.ini
 !**/onmind.ini.example
+# Template servidor (sin secretos: solo refs os.environ/)
+!scripts/onmind.ini
 xusers.txt
 **/*.pem
 **/*.key

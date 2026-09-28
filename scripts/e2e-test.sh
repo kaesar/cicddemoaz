@@ -30,12 +30,21 @@ if [ -z "$TOKEN" ]; then
   echo "SMOKE PARCIAL (sin E2E_TOKEN): discovery + JWKS OK; userinfo y /abc autorizado omitidos"
   echo "Para el E2E completo: login OTP contra $XID_BASE y exporta E2E_TOKEN=<access_token>"
 else
-  curl -sf "$XID_BASE/openid/userinfo" -H "Authorization: Bearer $TOKEN" | grep -q sub || fail "userinfo"
+  # Se guarda body y HTTP por separado diagnosticando: 404=ruta mal, 401=tokeninválido/caducado.
+  U_CODE=$(curl -s -o /tmp/userinfo.json -w '%{http_code}' \
+    "$XID_BASE/$TENANT/openid/userinfo" -H "Authorization: Bearer $TOKEN")
+  if [ "$U_CODE" != 200 ] || ! grep -q sub /tmp/userinfo.json; then
+    fail "userinfo HTTP=$U_CODE (404=ruta, 401=token inválido o caducado)"
+  fi
   pass "userinfo"
 
-  RESP="$(curl -sf -X POST "$XDB_BASE/abc" -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer $TOKEN" \
-    -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}')" || fail "/abc con token"
+  A_CODE=$(curl -s -o /tmp/abc.json -w '%{http_code}' -X POST "$XDB_BASE/abc" \
+    -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+    -d '{"what":"find","from":"xyany","some":"PRODUCTS.SHEET","size":"5"}')
+  if [ "$A_CODE" != 200 ]; then
+    fail "/abc con token HTTP=$A_CODE (401=token inválido o caducado)"
+  fi
+  RESP=$(cat /tmp/abc.json)
   pass "/abc autorizado: $(echo "$RESP" | head -c 120)"
 fi
 

@@ -20,9 +20,9 @@ flowchart LR
     XID
     XDB
     Cosmos
-    ACR["ACR"]
+    ACR["Azure Container Registry"]
     KV["Key Vault"]
-    CAE["Container Apps Env"]
+    ACA["Azure Container Apps<br/>Environment"]
     SWA["Static Web Apps<br/>opcional"]
   end
   KV -.->|"secrets: JWT, Cosmos key,<br/>RSA JWK, client_secret"| XID
@@ -61,7 +61,7 @@ flowchart LR
 
 `iac/terraform/`:
 
-- `main.tf`: providers `azurerm`, RG, Log Analytics, CAE, identidades, roles.
+- `main.tf`: providers `azurerm`, RG, Log Analytics, ACA, identidades, roles.
 - `acr.tf`: Azure Container Registry (Basic/SKU variable).
 - `cosmos.tf`: cuenta (SQL API: es el lenguaje de Cosmos DB, no SQL Server) + database + container (`/id`).
 - `container-apps.tf`: `xid` y `xdb` Container Apps con ingress, env/secrets desde Key Vault, probes (`/health`, `/abc`).
@@ -83,13 +83,13 @@ flowchart TB
 
   subgraph RG["rg-onmind-ejercicio"]
     ACR["ACR<br/>imagenes xid - xdb - app"]
-    LAW["Log Analytics<br/>logs CAE"]
+    LAW["Log Analytics<br/>logs ACA"]
     KV["Key Vault<br/>xid-rsa-jwk<br/>cosmos key + endpoint"]
     COSMOS["Cosmos DB<br/>(SQL API: db onmind - container kv)<br/>provisioned 400 RU"]
     SWA["Static Web App<br/>app (opcional)"]
     MIDX["Managed Identity<br/>xid"]
     MIDB["Managed Identity<br/>xdb"]
-    subgraph CAE["Container Apps Environment"]
+    subgraph ACA["Azure Container Apps Environment"]
       ENVST["env storage xid-data<br/>Azure Files - montaje /data"]
       XID["Container App xid<br/>min 0 - max 1<br/>:8787"]
       XDB["Container App xdb<br/>min 0 - max 1<br/>:9990"]
@@ -125,22 +125,26 @@ Secrets nunca en código: Key Vault + Managed Identity o `variableGroup` del pip
 - `iss` y discovery **derivan del Host de la petición** (`originOf(req)` en `src/entra.js`): no existe
   `XID_ISSUER`. Tras un proxy TLS hay que preservar el header `Host` o el `iss` saldrá en http.
 
-### XDB (`config/onmind.ini.example`)
+### XDB (`config/onmind.ini.example` en local, `scripts/onmind.ini` en servidores)
 
-> XDB solo lee `onmind.ini` como Properties (`Rote`); **ignora variables de entorno**.
+> XDB lee `onmind.ini` como Properties (`Rote`: `ONMIND_INI`, `./`, `../`, `/app/`).
+> Desde xdb v0.16 cualquier valor admite `os.environ/NOMBRE` (fail-fast si falta la env).
 > Claves reales (`AuthConfig` + `KVStoreFactory`).
 
 ```ini
 dai.port = 9990
-dai.cors = *
+app.cors = *   # o lista por comas; en Azure: os.environ/XDB_CORS_ORIGINS
 
 auth.enabled = true
 auth.type = ENTRAID
 auth.oidc.url = http://localhost:8787
 auth.oidc.client_id = my-webapp
-# JwtValidator solo verifica HS256 con secreto; los token Entra de XID son RS256:
-# sin auth.jwt.secret se acepta el payload decodificado SIN verificar firma (solo dev).
-# auth.jwt.secret = <solo si los tokens son HS256>
+# Desde xdb v0.15 hay verificación RS256 real con auth.oidc.jwks_url (+ issuer/audience);
+# sin jwks ni secret se acepta el payload decodificado SIN verificar firma (solo dev,
+# es nuestra config actual). No pongas auth.jwt.secret con tokens RS256 (daría 401).
+# auth.oidc.jwks_url = http://localhost:8787/common/discovery/v2.0/keys
+# auth.jwt.issuer = http://localhost:8787/common/v2.0
+# auth.jwt.audience = api://my-webapp
 
 kv.store = mvstore
 kv.mvstore.name = xybox
@@ -151,9 +155,9 @@ kv.mvstore.name = xybox
 # kv.cosmosdb.container = kvstore
 ```
 
-En Container Apps el fichero no se puede montar sin Azure Files: lo genera
-`scripts/entrypoint-xdb.sh` desde env al arrancar (imagen `scripts/Dockerfile.xdb`,
-env `XDB_*`/`COSMOS_*` en `container-apps.tf`, secretos por referencia a Key Vault).
+En Container Apps va bakeado `scripts/onmind.ini` (`/app`, `ONMIND_INI` explícito en
+`scripts/Dockerfile.xdb`); las env `XDB_*`/`COSMOS_*` las pone `container-apps.tf`
+(secretos por referencia a Key Vault).
 
 ### WebApp (`app/.env.example`)
 
@@ -174,3 +178,18 @@ env `XDB_*`/`COSMOS_*` en `container-apps.tf`, secretos por referencia a Key Vau
 3. Cosmos SQL API con partición `/id` (simple para KV genérico).
 4. Terraform único IaC; sin Ansible.
 5. PKCE manual en la SPA (`fetch`, S256 vía WebCrypto, sin MSAL); `sessionStorage` para tokens.
+
+## Seguridad (postura actual: solo datos de prueba)
+
+- **CORS en XDB**: allowlist real desde xdb v0.15 (`app.cors`, antes `dai.cors` muerto);
+  en Azure restringido a SWA+local vía `XDB_CORS_ORIGINS`, en local `*` por conveniencia.
+  No es control de acceso: `curl` ignora CORS.
+- **Controles reales hoy**: Bearer obligatorio en todo salvo `/health`; secretos en Key Vault;
+  ACR privado; identidades gestionadas (AcrPull, Secrets User).
+- **Brechas conocidas**: nuestra config acepta payload decodificado **sin verificar
+  firma** (un JWT autofirmado entra; xdb ya soporta JWKS real, no activado aquí);
+  ingress público sin restricción IP, VNet, WAF ni rate-limit.
+- **Endurecimiento en orden** (fuera del alcance de este ejercicio):
+  1) validación JWT real (si se admite/configura JWKS en **XDB**)
+  2) restricción de red (ejemplo: Front Door + WAF delante, `ipSecurityRestrictions` en Container Apps)
+  3) orígenes CORS específicos (si se admite/configura en **XDB**).

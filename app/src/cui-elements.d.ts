@@ -1,4 +1,4 @@
-// Declaraciones para los web components OnMind-CUI v3 (vendorizado en public/cui/).
+// Declaraciones para los web components OnMind-CUI v3 (vendorizado en public/js/).
 // Se manipulan vía atributos y listeners nativos (ver App.tsx); aquí solo los tipos JSX.
 import type * as React from 'react';
 

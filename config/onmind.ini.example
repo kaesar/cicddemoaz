@@ -1,22 +1,35 @@
-# XDB solo lee este fichero como Properties (Rote: ./onmind.ini, ../onmind.ini o /app/onmind.ini).
-# NO lee variables de entorno. Copiar a config/onmind.ini (gitignored) u onmind.ini según arranque.
-# Puertos/servidor
+# XDB lee este fichero como Properties (Rote: ONMIND_INI, ./onmind.ini, ../onmind.ini
+# o /app/onmind.ini). Cualquier valor admite os.environ/NOMBRE (resuelto en arranque
+# con fail-fast si falta la env); el resto va en claro. Copiar a config/onmind.ini
+# (gitignored) u onmind.ini según arranque.
+# Base que Rote exige (sin app.local el arranque muere con NullPointerException).
+app.mode = production
+app.local = ./
+app.base = /app
+app.language = en
+app.logger = -
+app.modality = 5
+app.deploy = 0
+app.ui = +
 dai.port = 9990
 dai.host = http://localhost
-dai.cors = *
+app.cors = *
+db.query_limit = 1200
 
 # Auth: ENTRAID acepta `Authorization: Bearer <token de XID>`.
-# REALIDAD (JwtValidator): solo verifica HS256 con secreto compartido; los access token de la
-# fachada Entra de XID son RS256. Sin auth.jwt.secret se acepta el payload decodificado
-# SIN verificar firma (solo dev). No pongas secret con tokens RS256 (daría 401).
+# Desde xdb v0.15 con auth.oidc.jwks_url hay verificación RS256 real; sin jwks ni
+# secret se acepta el payload decodificado SIN verificar firma (solo dev).
 auth.enabled = true
 auth.type = ENTRAID
 auth.oidc.url = http://localhost:8787
 auth.oidc.client_id = my-webapp
-# auth.jwt.secret = <solo si los tokens son HS256>
+# auth.oidc.jwks_url = http://localhost:8787/common/discovery/v2.0/keys
 # auth.jwt.issuer = http://localhost:8787/common/v2.0
+# auth.jwt.audience = api://my-webapp
+# auth.jwt.secret = <solo si los tokens son HS256>
+# Ejemplos con env (servidores): auth.jwt.secret = os.environ/XDB_JWT_SECRET
 
-# Persistencia local; para Cosmos DB (Fase 3): kv.store = cosmosdb + kv.cosmosdb.*
+# Persistencia local; para Cosmos DB: kv.store = cosmosdb + kv.cosmosdb.*
 kv.store = mvstore
 kv.mvstore.name = xybox
 # kv.store = cosmosdb

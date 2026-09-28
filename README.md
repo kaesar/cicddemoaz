@@ -1,12 +1,12 @@
-# Integration Exercise: WebApp + XID (Entra facade) + XDB (Cosmos DB) on Azure
+# CICD: WebApp + XID (Entra-ID like) + XDB / Azure
 
 Full integration scenario designed for Azure:
 
 - **Dummy WebApp** (React + manual PKCE with `fetch`, no MSAL) authenticates users against [**OnMind-XID**](https://github.com/kaesar/onmind-xid), which simulates **Microsoft Entra ID** (OIDC facade).
 - After login, the WebApp fetches a data listing from [**OnMind-XDB**](https://github.com/kaesar/onmind-xdb) (`/abc` and `/files` endpoints).
-- XDB persists to **Azure Cosmos DB (SQL API)** via `kv.store=cosmosdb` (`KVStoreFactory` → `CosmosPlug`).
+- XDB persists to **Azure Cosmos DB (SQL API)** via `kv.store=cosmosdb` (`KVStoreFactory`, `CosmosPlug`).
 - 100% **Terraform** infra: RG, Cosmos DB, ACR, Container Apps Environment + 2 Container Apps (XID/XDB), Static Web Apps (optional), Key Vault + Managed Identity.
-- CI/CD with multi-stage **Azure DevOps Pipelines**: Build → Test → Deploy (ACR + Terraform) → Smoke E2E.
+- CI/CD with multi-stage **Azure DevOps Pipelines**: Build + Test + Deploy (ACR + Terraform) + Smoke (E2E with script).
 
 ```
 ┌─────────────────────┐     OIDC / Entra facade      ┌──────────────────────┐
@@ -27,17 +27,17 @@ Full integration scenario designed for Azure:
 ```
 ./  (project root)
 ├── README.md
-├── .dockerignore               # aligera el contexto del build xdb
+├── .dockerignore               # slims the xdb build context
 ├── docker-compose.yml          # local reference: XID :8787 + XDB :9990 + WebApp :3000
 ├── .env.example
 ├── config/
 │   ├── onmind.ini.example      # XDB: auth.type=ENTRAID + kv.store (Properties, no sections)
 │   └── xid.env.example         # XID: Entra facade + CORS + OTP allowlist
 ├── docs/
-│   ├── arquitectura.md         # runtime + diagrama de infraestructura IaC
+│   ├── arquitectura.md         # runtime + IaC infrastructure diagram
 │   ├── flujo-auth.md
 │   └── checklist.md
-├── app/                        # React + Vite + PKCE manual (fetch, sin MSAL)
+├── app/                        # React + Vite + manual PKCE (fetch, no MSAL)
 ├── iac/
 │   └── terraform/              # Single IaC (no Ansible)
 │       ├── main.tf
@@ -55,8 +55,8 @@ Full integration scenario designed for Azure:
 └── scripts/
     ├── seed-xdb.sh
     ├── e2e-test.sh
-    ├── entrypoint-xdb.sh       # genera onmind.ini desde env (xdb ignora env)
-    └── Dockerfile.xdb          # build xdb (contexto: raíz del workspace)
+    ├── onmind.ini              # server template (os.environ/, baked to /app, ONMIND_INI)
+    └── Dockerfile.xdb          # xdb build (context: workspace root)
 ```
 
 ## Local quickstart
@@ -103,12 +103,14 @@ docker compose up --build
 -->
 ## Main flow
 
-1. User opens the WebApp → navigates to XID `/{tenant}/oauth2/v2.0/authorize` with PKCE (S256, WebCrypto).
-2. XID: email form → OTP or password (allowlist `xusers.txt`) → issues `authorization_code`.
-3. WebApp exchanges `code` at `/token` → Access + Id Token (RS256).
+1. User opens the WebApp - navigates to XID `/{tenant}/oauth2/v2.0/authorize` with PKCE (S256, WebCrypto).
+2. XID: email form - OTP or password (allowlist `xusers.txt`) - issues `authorization_code`.
+3. WebApp exchanges `code` at `/token` - Access + Id Token (RS256).
 4. WebApp calls `POST /abc` with `Authorization: Bearer <access_token>`.
-5. XDB validates the Bearer (`auth.type=ENTRAID`: HS256 with secret or signature-less decoded payload
-   in dev; no JWKS calls) → queries KV (local mvstore / Cosmos DB on Azure) → returns the listing.
+5. XDB checks the Bearer as plain resource server - it neither issues tokens nor is
+   an IdP/IAM (that is XID alone); it only verifies the token XID issued
+   (`auth.type=ENTRAID`, decode-only without secret in dev) - queries KV
+   (local mvstore / Cosmos DB on Azure) - returns the listing.
 6. WebApp renders the table.
 
 Details in `docs/flujo-auth.md`. Variables/secrets in `docs/arquitectura.md` and `config/`.
@@ -155,7 +157,7 @@ az provider register -n Microsoft.Storage --wait
 > `<SUBSCRIPTION_ID>` refers to the subscription ID in the Azure Portal. If you have a trial account, you have a default one and do not need this command.  
 > The commands using `az provider register -n` are run at least once for security purposes to enable the resource type in the Azure resource provider. Services: Azure Container Apps, ACR, Cosmos DB, Key Vault, Static Web Apps, Analytics, Storage (required to avoid `SubscriptionNotFound`).
 
-Terraform creates `role_assignment` resources, which needs the pipeline identity to be **Owner or User Access Administrator** (Contributor is not enough → 403 `roleAssignments/write`). Grant it once (you must run this as Owner):
+Terraform creates `role_assignment` resources, which needs the pipeline identity to be **Owner or User Access Administrator** (Contributor is not enough - 403 `roleAssignments/write`). Grant it once (you must run this as Owner):
 
 ```bash
 SP_OBJECT_ID=$(az ad sp list --display-name azure-rm-sc --query '[0].id' -o tsv)
@@ -177,7 +179,7 @@ az storage account create -n satfstatecicddemoaz -g rg-tfstate --sku Standard_LR
 az storage container create -n tfstate --account-name satfstatecicddemoaz
 ```
 
-### 3. `cicddemoaz` variable group (Pipelines → Library)
+### 3. `cicddemoaz` variable group (Pipelines - Library)
 
 One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be read back).
 
@@ -194,12 +196,20 @@ One variable per row. Mark `Secret` ones with 🔒 (masked in logs, can't be rea
 | `XDB_BASE` | – | *(after first deploy)* | Smoke (`e2e-test.sh`) |
 | `E2E_TOKEN` | (secret) | *(after first deploy, real OTP token)* | Smoke (`e2e-test.sh`) |
 | `XID_TENANT` | – | `common` | Smoke (`e2e-test.sh`) |
+| `USE_ENTRA` | – | `false` | Deploy (frontend against real Entra ID instead of XID) |
+| `ENTRA_TENANT_ID` | – | *(only if `USE_ENTRA=true`)* | Deploy (frontend authority) |
+| `ENTRA_CLIENT_ID` | – | *(only if `USE_ENTRA=true`)* | Deploy (frontend client_id) |
+| `ENTRA_SCOPE` | – | `api://<client>/access_as_user` | Deploy (frontend scope) |
 
-> These variables are added from **Azure Pipelines**
+> These variables are added from **Azure Pipelines** (You dont't need the last 4 variables)
+
+About **Microsoft Entra ID** (`ENTRA_`), that variables are used just when `USE_ENTRA=true`, understanding that...
+
+> With `USE_ENTRA=true` you first need an App Registration with redirect URIs (`http://localhost:3000` + your SWA) and an exposed API scope; XDB is unchanged (decode-only accepts both tokens).
 
 ### 4. Infra bootstrap (optional: local preview only)
 
-The pipeline self-bootstraps (targeted ACR apply → push → full apply), so this step
+The pipeline self-bootstraps (targeted ACR apply - push - full apply), so this step
 is only for reviewing the plan locally before the first run.
 
 ```bash
@@ -218,8 +228,10 @@ terraform plan \
 1. In the variable group set `XUSERS_CONTENT` (e.g. `alice@example.com`) — Deploy uploads it
    before the first apply so xid has users from day one. No ACR variables needed:
    Deploy creates the ACR itself (targeted apply) and reads its URL from outputs.
-2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build → Test → Deploy → Smoke).
-   The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR.
+2. Create the pipeline from `pipe/azure-pipelines.yml` and run it (Build + Test + Deploy + Smoke).
+   The Deploy stage builds the `xid`, `xdb` (external repos) and `app` images and pushes them to ACR,
+   then builds the frontend against the Azure XID/XDB URLs and deploys `app/dist` to the
+   Static Web App (`swa_hostname` output = public frontend URL).
 3. Generate and store the XID RSA key (one-time; the Terraform placeholder breaks
    JWKS and token signing until replaced):
 
@@ -237,7 +249,7 @@ az role assignment create --assignee-object-id "$MY_OID" \
   --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-cicddemoaz/providers/Microsoft.KeyVault/vaults/onmind-app-kv
 ```
 
-4. Re-run the Deploy stage so the Container Apps pick up the secrets.
+4. Re-run the Deploy stage so the Container Apps pick up the secrets (then re-run for seed data)
 
 > **XID users (`xusers.txt`) on Azure:** the production image expects `/data/xusers.txt`
 > (`XID_USERS_TXT`, see xid `Dockerfile`) and only ships the `.example` files. The Deploy
@@ -265,13 +277,19 @@ cd app
 VITE_XID_AUTHORITY="https://$XID_FQDN/common" VITE_XDB_API_URL="https://$XDB_FQDN" bun dev
 ```
 
-> copy `access_token` from `sessionStorage` (`xid.session`) to assign `E2E_TOKEN`
+> copy `accessToken` from `sessionStorage` (`xid.session`) to assign `E2E_TOKEN`
 
 ```bash
 export XID_BASE="https://<xid_url>" XDB_BASE="https://<xdb_url>" E2E_TOKEN="<otp-access_token>"
 ./scripts/e2e-test.sh
 curl -s "$XID_BASE/common/v2.0/.well-known/openid-configuration" | head -c 300; echo
 ```
+
+Pipeline parameters (manual runs): `destroy` (default `false`, only Destroy runs) and
+`seed` (default `false`, runs `scripts/seed-xdb.sh` with `E2E_TOKEN` before the smoke).
+
+The smoke step is non-blocking (`continueOnError`): a stale token leaves it orange,
+never red — the explicit `seed` step does fail loudly.
 
 ### 7. Destroy (manual only)
 
